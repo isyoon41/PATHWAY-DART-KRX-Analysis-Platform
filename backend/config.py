@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import List
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -17,14 +18,18 @@ class Settings(BaseSettings):
     dart_base_url: str = "https://opendart.fss.or.kr/api"
 
     # 데이터베이스
-    database_url: str
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/company_analysis"
 
     # CORS
-    allowed_origins: List[str] = ["http://localhost:3000"]
+    allowed_origins: str = "http://localhost:3000"
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    def get_allowed_origins(self) -> List[str]:
+        """CORS 허용 origins를 리스트로 반환"""
+        return [origin.strip() for origin in self.allowed_origins.split(',')]
 
 
 settings = Settings()
