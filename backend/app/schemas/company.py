@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 
@@ -68,7 +68,7 @@ class DisclosureList(BaseModel):
     """공시 목록 응답"""
     status: str = Field(..., description="응답 상태")
     message: str = Field(..., description="응답 메시지")
-    list: list[DisclosureItem] = Field(..., description="공시 목록")
+    list: List[DisclosureItem] = Field(..., description="공시 목록")
     page_no: int = Field(..., description="페이지 번호")
     page_count: int = Field(..., description="페이지당 건수")
     total_count: int = Field(..., description="전체 건수")

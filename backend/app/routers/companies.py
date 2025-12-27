@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Path
 from typing import List
 from app.services.dart_service import dart_service
 from app.services.krx_service import krx_service
@@ -30,7 +30,7 @@ async def search_companies(
 
 @router.get("/{corp_code}", response_model=CompanyInfo)
 async def get_company_info(
-    corp_code: str = Query(..., description="기업 고유번호")
+    corp_code: str = Path(..., description="기업 고유번호")
 ):
     """
     기업 기본 정보 조회
@@ -125,7 +125,7 @@ async def get_financial_statement(
 
 @router.get("/krx/{stock_code}")
 async def get_krx_stock_info(
-    stock_code: str = Query(..., description="종목코드")
+    stock_code: str = Path(..., description="종목코드")
 ):
     """
     KRX 주식 정보 조회
