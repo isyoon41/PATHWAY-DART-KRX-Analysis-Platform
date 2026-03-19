@@ -1,9 +1,9 @@
 import axios from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
+// rewrites() 덕분에 /api/* → localhost:8000/api/* 로 프록시됨
+// 미리보기/배포 환경 어디서든 포트 3000 하나로 동작
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: '',
   headers: {
     'Content-Type': 'application/json',
   },
