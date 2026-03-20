@@ -17,8 +17,9 @@ class Settings(BaseSettings):
     dart_api_key: str
     dart_base_url: str = "https://opendart.fss.or.kr/api"
 
-    # 데이터베이스
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/company_analysis"
+    # KRX API
+    krx_api_key: str = ""
+    krx_base_url: str = "https://openapi.krx.co.kr/contents/COM/GenerateOTP.jspx"
 
     # CORS
     allowed_origins: str = "http://localhost:3000"

@@ -1,133 +1,172 @@
+"""
+KRX (한국거래소) Open API 연동 서비스
+
+KRX Open API는 2단계 인증 방식을 사용합니다:
+  1단계: OTP 발급 (GenerateOTP) → auth 토큰 획득
+  2단계: 데이터 조회 (GetJSONData) → auth 토큰으로 실제 데이터 요청
+"""
 import httpx
 from typing import Dict, List, Optional
 from datetime import datetime
-from bs4 import BeautifulSoup
+from config import settings
+
+
+KRX_OTP_URL  = "https://openapi.krx.co.kr/contents/COM/GenerateOTP.jspx"
+KRX_DATA_URL = "https://openapi.krx.co.kr/contents/SBT/GetJSONData.jspx"
 
 
 class KRXService:
-    """KRX (한국거래소) 데이터 연동 서비스"""
+    """KRX Open API 연동 서비스"""
 
     def __init__(self):
-        self.base_url = "http://data.krx.co.kr"
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "http://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd"
-        }
+        self.api_key = settings.krx_api_key
 
-    async def get_stock_info(self, stock_code: str) -> Dict:
+    async def _get_otp(self, bld: str, params: Dict) -> str:
+        """OTP 토큰 발급"""
+        payload = {"bld": bld, "name": "otp", **params}
+        headers = {"AUTH_KEY": self.api_key}
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(KRX_OTP_URL, data=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.text.strip()
+
+    async def _fetch(self, bld: str, params: Dict) -> Dict:
+        """OTP 발급 후 데이터 조회"""
+        otp = await self._get_otp(bld, params)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(KRX_DATA_URL, data={"code": otp})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_stock_price(self, stock_code: str, date: Optional[str] = None) -> Dict:
         """
-        주식 기본 정보 조회
+        주식 현재가 및 기본 시장 정보 조회
 
         Args:
-            stock_code: 종목코드
-
-        Returns:
-            주식 정보 (출처 포함)
+            stock_code: 종목코드 (예: 005930)
+            date: 조회 기준일 (YYYYMMDD, 없으면 최근 영업일)
         """
-        # KRX API 엔드포인트 (실제 API는 확인 필요)
-        url = f"{self.base_url}/comm/bldAttendant/getJsonData.cmd"
+        if not self.api_key:
+            return {"error": "KRX API 키가 설정되지 않았습니다.", "stock_code": stock_code}
 
-        params = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
-            "locale": "ko_KR",
-            "isuCd": stock_code
-        }
+        query_date = date or datetime.now().strftime("%Y%m%d")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, data=params, headers=self.headers)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            data = await self._fetch(
+                bld="dbms/MDC/STAT/standard/MDCSTAT01501",
+                params={"isuCd": stock_code, "trdDd": query_date}
+            )
 
-            # 출처 정보 추가
             data["_source"] = {
-                "provider": "KRX (한국거래소)",
-                "url": f"http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201",
+                "provider": "KRX (한국거래소) Open API",
                 "stock_code": stock_code,
-                "retrieved_at": datetime.now().isoformat()
+                "query_date": query_date,
+                "url": "https://openapi.krx.co.kr",
+                "retrieved_at": datetime.now().isoformat(),
             }
-
             return data
 
-    async def get_market_data(self, stock_code: str, date: str) -> Dict:
-        """
-        시장 데이터 조회 (시가, 종가, 거래량 등)
-
-        Args:
-            stock_code: 종목코드
-            date: 조회 날짜 (YYYYMMDD)
-
-        Returns:
-            시장 데이터 (출처 포함)
-        """
-        url = f"{self.base_url}/comm/bldAttendant/getJsonData.cmd"
-
-        params = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
-            "locale": "ko_KR",
-            "trdDd": date,
-            "isuCd": stock_code
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, data=params, headers=self.headers)
-            response.raise_for_status()
-            data = response.json()
-
-            # 출처 정보 추가
-            data["_source"] = {
-                "provider": "KRX 시장 데이터",
-                "date": date,
-                "stock_code": stock_code,
-                "url": "http://data.krx.co.kr",
-                "retrieved_at": datetime.now().isoformat()
-            }
-
-            return data
-
-    async def get_listed_companies(self, market: str = "ALL") -> List[Dict]:
-        """
-        상장 기업 목록 조회
-
-        Args:
-            market: 시장 구분 (ALL, KOSPI, KOSDAQ, KONEX)
-
-        Returns:
-            상장 기업 목록 (출처 포함)
-        """
-        url = f"{self.base_url}/comm/bldAttendant/getJsonData.cmd"
-
-        market_code = {
-            "ALL": "",
-            "KOSPI": "STK",
-            "KOSDAQ": "KSQ",
-            "KONEX": "KNX"
-        }
-
-        params = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT01901",
-            "locale": "ko_KR",
-            "mktId": market_code.get(market, "")
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, data=params, headers=self.headers)
-            response.raise_for_status()
-            data = response.json()
-
-            # 출처 정보 추가
-            if isinstance(data, dict) and "OutBlock_1" in data:
-                for company in data["OutBlock_1"]:
-                    company["_source_url"] = f"http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101"
-
+        except Exception as e:
             return {
-                "companies": data.get("OutBlock_1", []) if isinstance(data, dict) else [],
-                "_source": {
-                    "provider": "KRX 상장 기업 목록",
-                    "market": market,
-                    "url": "http://data.krx.co.kr",
-                    "retrieved_at": datetime.now().isoformat()
-                }
+                "error": str(e),
+                "stock_code": stock_code,
+                "_source": {"provider": "KRX Open API", "retrieved_at": datetime.now().isoformat()}
             }
+
+    async def get_stock_price_list(
+        self,
+        market: str = "ALL",
+        date: Optional[str] = None
+    ) -> Dict:
+        """
+        시장 전체 주가 목록 조회
+
+        Args:
+            market: STK(코스피) / KSQ(코스닥) / KNX(코넥스) / ALL(전체)
+            date: 조회 기준일 (YYYYMMDD)
+        """
+        if not self.api_key:
+            return {"error": "KRX API 키가 설정되지 않았습니다."}
+
+        query_date = date or datetime.now().strftime("%Y%m%d")
+
+        market_map = {"ALL": "", "KOSPI": "STK", "KOSDAQ": "KSQ", "KONEX": "KNX"}
+        mkt_id = market_map.get(market, "")
+
+        try:
+            data = await self._fetch(
+                bld="dbms/MDC/STAT/standard/MDCSTAT01501",
+                params={"mktId": mkt_id, "trdDd": query_date}
+            )
+
+            data["_source"] = {
+                "provider": "KRX Open API - 주가 목록",
+                "market": market,
+                "query_date": query_date,
+                "retrieved_at": datetime.now().isoformat(),
+            }
+            return data
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def get_stock_code(self, company_name: str) -> List[Dict]:
+        """
+        기업명으로 종목코드 검색
+
+        Args:
+            company_name: 기업명 (부분 일치)
+        """
+        if not self.api_key:
+            return []
+
+        try:
+            data = await self._fetch(
+                bld="dbms/MDC/STAT/standard/MDCSTAT01901",
+                params={}
+            )
+
+            results = []
+            items = data.get("OutBlock_1", []) if isinstance(data, dict) else []
+            for item in items:
+                name = item.get("ISU_ABBRV", "") or item.get("ISU_NM", "")
+                if company_name in name:
+                    results.append({
+                        "stock_code": item.get("ISU_SRT_CD", ""),
+                        "company_name": name,
+                        "market": item.get("MKT_NM", ""),
+                        "_source": {
+                            "provider": "KRX Open API",
+                            "retrieved_at": datetime.now().isoformat()
+                        }
+                    })
+            return results
+
+        except Exception as e:
+            return []
+
+    async def get_holidays(self, year: Optional[str] = None) -> Dict:
+        """휴장일 조회"""
+        if not self.api_key:
+            return {"error": "KRX API 키가 설정되지 않았습니다."}
+
+        target_year = year or datetime.now().strftime("%Y")
+
+        try:
+            data = await self._fetch(
+                bld="dbms/MDC/STAT/standard/MDCSTAT03901",
+                params={"calnd_dd": target_year}
+            )
+            data["_source"] = {
+                "provider": "KRX Open API - 휴장일",
+                "year": target_year,
+                "retrieved_at": datetime.now().isoformat(),
+            }
+            return data
+        except Exception as e:
+            return {"error": str(e)}
 
 
 # 싱글톤 인스턴스
