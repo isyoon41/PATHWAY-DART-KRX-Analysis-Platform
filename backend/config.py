@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     krx_api_key: str = ""
     krx_base_url: str = "https://openapi.krx.co.kr/contents/COM/GenerateOTP.jspx"
 
+    # Claude API (Anthropic)
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-6"
+
     # CORS
     allowed_origins: str = "http://localhost:3000"
 

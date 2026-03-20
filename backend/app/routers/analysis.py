@@ -5,6 +5,7 @@ from app.services.dart_service import dart_service
 from app.services.krx_service import krx_service
 from app.services.dart_parser import create_parser, analyzer as section_analyzer
 from app.services.financial_parser import structure_financial_data
+from app.services.claude_service import claude_service
 from config import settings
 
 router = APIRouter()
@@ -276,6 +277,83 @@ def _build_sources_summary() -> Dict:
         "data_reliability": "모든 데이터는 금융감독원·한국거래소 공식 API 및 공시 원문에서 수집됩니다.",
         "last_updated": datetime.now().isoformat(),
     }
+
+
+@router.get("/{corp_code}/ai-report")
+async def get_ai_report(
+    corp_code: str = Path(..., description="기업 고유번호"),
+    bsns_year: str = Query(
+        default="",
+        description="사업연도 (예: 2023, 기본값: 전년도)",
+        regex=r"^\d{4}$|^$"
+    ),
+) -> Dict[str, Any]:
+    """
+    Claude AI 종합 기업분석 리포트
+
+    DART 재무제표 + 공시 데이터를 Claude AI가 분석하여
+    투자자 관점의 종합 리포트를 생성합니다.
+
+    - **corp_code**: 기업 고유번호
+    - **bsns_year**: 사업연도 (기본값: 전년도)
+    """
+    try:
+        year = bsns_year or str(datetime.now().year - 1)
+
+        # 병렬로 데이터 수집
+        import asyncio
+        company_info, financial_raw, disclosures = await asyncio.gather(
+            dart_service.get_company_info(corp_code),
+            dart_service.get_financial_statement(corp_code, year, "11011"),
+            dart_service.get_disclosure_list(
+                corp_code=corp_code,
+                bgn_de=(datetime.now() - timedelta(days=90)).strftime("%Y%m%d"),
+                end_de=datetime.now().strftime("%Y%m%d"),
+                page_no=1,
+                page_count=20,
+            ),
+            return_exceptions=True
+        )
+
+        if isinstance(company_info, Exception) or company_info.get("status") == "013":
+            raise HTTPException(status_code=404, detail="기업을 찾을 수 없습니다.")
+
+        # 재무 구조화
+        financial_structured = {}
+        if not isinstance(financial_raw, Exception):
+            financial_structured = structure_financial_data(financial_raw)
+
+        # 시장 데이터 (종목코드 있을 때만)
+        market_data = {}
+        stock_code = company_info.get("stock_code")
+        if stock_code:
+            try:
+                market_data = await krx_service.get_stock_price(stock_code)
+            except Exception:
+                pass
+
+        # Claude AI 분석 리포트 생성
+        corp_name = company_info.get("corp_name", corp_code)
+        report = claude_service.generate_comprehensive_report(
+            corp_name=corp_name,
+            company_info=company_info,
+            financial_data=financial_structured,
+            disclosures=disclosures if not isinstance(disclosures, Exception) else {},
+            market_data=market_data,
+            bsns_year=year,
+        )
+
+        return {
+            "corp_code": corp_code,
+            "corp_name": corp_name,
+            "bsns_year": year,
+            **report,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI 리포트 생성 중 오류: {str(e)}")
 
 
 def _reprt_code_to_name(code: str) -> str:
