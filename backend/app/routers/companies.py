@@ -7,6 +7,23 @@ from app.schemas.company import CompanySearchResult, CompanyInfo, DisclosureList
 router = APIRouter()
 
 
+@router.get("/krx/{stock_code}")
+async def get_krx_stock_info(
+    stock_code: str = Path(..., description="종목코드")
+):
+    """
+    KRX 주식 정보 조회
+
+    - **stock_code**: 종목코드 (예: 005930)
+    - **반환**: 주식 정보 (출처 정보 포함)
+    """
+    try:
+        stock_info = await krx_service.get_stock_info(stock_code)
+        return stock_info
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"주식 정보 조회 중 오류 발생: {str(e)}")
+
+
 @router.get("/search", response_model=List[CompanySearchResult])
 async def search_companies(
     query: str = Query(..., description="검색할 기업명", min_length=1)
@@ -121,20 +138,3 @@ async def get_financial_statement(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"재무제표 조회 중 오류 발생: {str(e)}")
-
-
-@router.get("/krx/{stock_code}")
-async def get_krx_stock_info(
-    stock_code: str = Path(..., description="종목코드")
-):
-    """
-    KRX 주식 정보 조회
-
-    - **stock_code**: 종목코드 (예: 005930)
-    - **반환**: 주식 정보 (출처 정보 포함)
-    """
-    try:
-        stock_info = await krx_service.get_stock_info(stock_code)
-        return stock_info
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"주식 정보 조회 중 오류 발생: {str(e)}")

@@ -1,3 +1,5 @@
+import io
+import zipfile
 import httpx
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -126,40 +128,63 @@ class DARTService:
         """
         기업명으로 기업 검색
 
+        DART corpCode.xml은 ZIP 압축 파일로 제공됩니다.
+        압축 해제 후 XML을 파싱하여 기업명 기반으로 필터링합니다.
+
         Args:
-            company_name: 기업명
+            company_name: 기업명 (부분 일치 검색)
 
         Returns:
-            검색된 기업 목록
+            검색된 기업 목록 (상장사 우선)
         """
-        # DART API의 고유번호 목록 조회 (corpCode.xml)
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/corpCode.xml",
                 params={"crtfc_key": self.api_key}
             )
             response.raise_for_status()
 
-            # XML 파싱 및 검색 로직 (BeautifulSoup 사용)
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.content, 'xml')
+        # ZIP 압축 해제
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            xml_filename = next(
+                (name for name in zf.namelist() if name.endswith(".xml")),
+                None
+            )
+            if not xml_filename:
+                return []
+            xml_content = zf.read(xml_filename)
 
-            companies = []
-            for corp in soup.find_all('list'):
-                corp_name = corp.find('corp_name').text
-                if company_name.lower() in corp_name.lower():
-                    companies.append({
-                        "corp_code": corp.find('corp_code').text,
-                        "corp_name": corp_name,
-                        "stock_code": corp.find('stock_code').text if corp.find('stock_code') else None,
-                        "modify_date": corp.find('modify_date').text if corp.find('modify_date') else None,
-                        "_source": {
-                            "provider": "DART 기업 목록",
-                            "retrieved_at": datetime.now().isoformat()
-                        }
-                    })
+        # XML 파싱
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(xml_content, "xml")
 
-            return companies
+        companies = []
+        for corp in soup.find_all("list"):
+            corp_name_tag = corp.find("corp_name")
+            if not corp_name_tag:
+                continue
+            corp_name = corp_name_tag.text
+
+            if company_name.lower() not in corp_name.lower():
+                continue
+
+            stock_code_tag = corp.find("stock_code")
+            stock_code = stock_code_tag.text.strip() if stock_code_tag else ""
+
+            companies.append({
+                "corp_code": corp.find("corp_code").text,
+                "corp_name": corp_name,
+                "stock_code": stock_code if stock_code else None,
+                "modify_date": corp.find("modify_date").text if corp.find("modify_date") else None,
+                "_source": {
+                    "provider": "DART 기업 목록",
+                    "retrieved_at": datetime.now().isoformat()
+                }
+            })
+
+        # 상장사(stock_code 있음) 우선 정렬, 최대 20개
+        companies.sort(key=lambda x: (x["stock_code"] is None, x["corp_name"]))
+        return companies[:20]
 
     def _get_report_type_name(self, reprt_code: str) -> str:
         """보고서 코드를 이름으로 변환"""

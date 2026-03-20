@@ -34,18 +34,6 @@ SECTION_PATTERNS = [
     ("other",              "기타 사항",               [r"그\s*밖에", r"기타\s*사항"]),
 ]
 
-# 재무제표 주요 계정 패턴 (XBRL 계정명 기반)
-FINANCIAL_ACCOUNTS = {
-    "revenue":           ["매출액", "영업수익", "수익(매출액)"],
-    "operating_profit":  ["영업이익", "영업손익"],
-    "net_income":        ["당기순이익", "당기순손익"],
-    "total_assets":      ["자산총계", "총자산"],
-    "total_equity":      ["자본총계", "총자본"],
-    "total_liabilities": ["부채총계", "총부채"],
-    "operating_cashflow":["영업활동현금흐름", "영업활동으로인한현금흐름"],
-}
-
-
 @dataclass
 class ReportSection:
     """공시 보고서의 단일 섹션"""
@@ -53,7 +41,6 @@ class ReportSection:
     title: str                         # 섹션 제목
     content: str                       # 원본 텍스트 (정제된)
     tables: List[Dict] = field(default_factory=list)   # 표 데이터
-    key_numbers: Dict = field(default_factory=dict)    # 추출된 수치
     char_count: int = 0                # 텍스트 길이
     source_url: str = ""               # 출처 URL
 
@@ -230,17 +217,11 @@ class DARTReportParser:
         # 표 구조화
         tables = self._extract_tables(temp_soup)
 
-        # 주요 수치 추출 (재무 섹션에만 의미 있음)
-        key_numbers = {}
-        if code in ("financial_info", "mda"):
-            key_numbers = self._extract_numbers(clean, tables)
-
         return ReportSection(
             code=code,
             title=title,
             content=clean[:30000],   # 섹션당 최대 30K자
             tables=tables[:10],      # 표 최대 10개
-            key_numbers=key_numbers,
             char_count=len(clean),
             source_url=f"{self.base_url}/dsaf001/main.do?rcpNo={rcept_no}",
         )
@@ -274,38 +255,6 @@ class DARTReportParser:
                 })
 
         return tables
-
-    def _extract_numbers(self, text: str, tables: List[Dict]) -> Dict:
-        """재무 관련 핵심 수치 추출"""
-        numbers = {}
-
-        # 텍스트에서 숫자 패턴 추출 (단위: 백만원, 억원 등)
-        amount_pattern = r"([\d,]+)\s*(백만원|억원|원|천원)"
-        for match in re.finditer(amount_pattern, text):
-            value_str = match.group(1).replace(",", "")
-            unit = match.group(2)
-            try:
-                value = int(value_str)
-                # 단위 정규화 (백만원 기준)
-                if unit == "억원":
-                    value *= 100
-                elif unit == "원":
-                    value //= 1_000_000
-                elif unit == "천원":
-                    value //= 1_000
-
-                # 주변 텍스트로 계정명 추정
-                start = max(0, match.start() - 30)
-                context = text[start:match.start()].strip()
-                for account_key, account_names in FINANCIAL_ACCOUNTS.items():
-                    if any(name in context for name in account_names):
-                        numbers[account_key] = value
-                        break
-            except ValueError:
-                continue
-
-        return numbers
-
 
 class SectionAnalyzer:
     """
@@ -343,9 +292,7 @@ class SectionAnalyzer:
             "retrieved_at": datetime.now().isoformat(),
         }
 
-        if section.code == "financial_info":
-            base.update(self._analyze_financial(section))
-        elif section.code == "business_content":
+        if section.code == "business_content":
             base.update(self._analyze_business(section))
         elif section.code == "audit_opinion":
             base.update(self._analyze_audit(section))
@@ -355,27 +302,6 @@ class SectionAnalyzer:
             base.update(self._analyze_overview(section))
 
         return base
-
-    def _analyze_financial(self, section: ReportSection) -> Dict:
-        """재무 섹션: 주요 지표 및 비율 계산"""
-        nums = section.key_numbers
-        result = {"key_financials": nums}
-
-        # 수익성 비율
-        if "net_income" in nums and "total_assets" in nums and nums["total_assets"]:
-            result["roa"] = round(nums["net_income"] / nums["total_assets"] * 100, 2)
-        if "net_income" in nums and "total_equity" in nums and nums["total_equity"]:
-            result["roe"] = round(nums["net_income"] / nums["total_equity"] * 100, 2)
-
-        # 부채비율
-        if "total_liabilities" in nums and "total_equity" in nums and nums["total_equity"]:
-            result["debt_ratio"] = round(
-                nums["total_liabilities"] / nums["total_equity"] * 100, 2
-            )
-
-        # 표 개수로 재무 정보 충실도 평가
-        result["data_richness"] = "풍부" if len(section.tables) >= 5 else "보통"
-        return result
 
     def _analyze_business(self, section: ReportSection) -> Dict:
         """사업의 내용 섹션: 주요 사업 및 리스크 추출"""
