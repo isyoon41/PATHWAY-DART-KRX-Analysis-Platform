@@ -1,7 +1,7 @@
-# 주말근무수당 분석 플랫폼 - 프로젝트 상태
+# PATHWAY DART·KRX 기업분석 플랫폼 - 프로젝트 상태
 
 📅 **마지막 업데이트**: 2026-03-20
-🌿 **현재 브랜치**: `claude/company-analysis-platform-fYhpR`
+🌿 **현재 브랜치**: `main`
 
 ---
 
@@ -168,7 +168,7 @@ DART_API_KEY=your_dart_api_key_here
 ## 📂 주요 파일 구조
 
 ```
-weekend-work-allowance-analysis/
+PATHWAY-DART-KRX-Analysis-Platform/
 ├── backend/
 │   ├── main.py                           # FastAPI 앱 진입점
 │   ├── config.py                         # 설정
@@ -215,7 +215,7 @@ weekend-work-allowance-analysis/
 
 3. **AI 분석 통합**
    - Claude API로 섹션 요약
-   - 주말근무수당 관련 텍스트 추출
+   - 섹션별 핵심 지표 텍스트 추출
    - 자연어 질의응답
 
 4. **데이터베이스**
