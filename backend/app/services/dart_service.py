@@ -186,6 +186,119 @@ class DARTService:
         companies.sort(key=lambda x: (x["stock_code"] is None, x["corp_name"]))
         return companies[:20]
 
+    async def get_major_shareholders(
+        self,
+        corp_code: str,
+        bsns_year: str,
+        reprt_code: str = "11011",
+    ) -> Dict:
+        """
+        최대주주 현황 조회 (DART majorstock.json)
+
+        Args:
+            corp_code: 기업 고유번호
+            bsns_year: 사업연도 (YYYY)
+            reprt_code: 보고서 코드
+
+        Returns:
+            최대주주 및 특수관계인 지분 목록
+        """
+        data = await self._request(
+            "majorstock.json",
+            {"corp_code": corp_code, "bsns_year": bsns_year, "reprt_code": reprt_code},
+        )
+        data["_source"] = {
+            "provider": "DART 최대주주 현황",
+            "business_year": bsns_year,
+            "retrieved_at": datetime.now().isoformat(),
+        }
+        return data
+
+    async def get_executives(
+        self,
+        corp_code: str,
+        bsns_year: str,
+        reprt_code: str = "11011",
+    ) -> Dict:
+        """
+        임원 현황 조회 (DART exctvSttus.json)
+
+        Args:
+            corp_code: 기업 고유번호
+            bsns_year: 사업연도 (YYYY)
+            reprt_code: 보고서 코드
+
+        Returns:
+            임원 명단 및 직위 정보
+        """
+        data = await self._request(
+            "exctvSttus.json",
+            {"corp_code": corp_code, "bsns_year": bsns_year, "reprt_code": reprt_code},
+        )
+        data["_source"] = {
+            "provider": "DART 임원 현황",
+            "business_year": bsns_year,
+            "retrieved_at": datetime.now().isoformat(),
+        }
+        return data
+
+    async def get_affiliated_companies(
+        self,
+        corp_code: str,
+        bsns_year: str,
+        reprt_code: str = "11011",
+    ) -> Dict:
+        """
+        계열회사 현황 조회 (DART affilCo.json)
+
+        Args:
+            corp_code: 기업 고유번호
+            bsns_year: 사업연도 (YYYY)
+            reprt_code: 보고서 코드
+
+        Returns:
+            계열회사 목록
+        """
+        data = await self._request(
+            "affilCo.json",
+            {"corp_code": corp_code, "bsns_year": bsns_year, "reprt_code": reprt_code},
+        )
+        data["_source"] = {
+            "provider": "DART 계열회사 현황",
+            "business_year": bsns_year,
+            "retrieved_at": datetime.now().isoformat(),
+        }
+        return data
+
+    async def get_key_indicators(
+        self,
+        corp_code: str,
+        bsns_year: str,
+        reprt_code: str = "11011",
+    ) -> Dict:
+        """
+        단일회사 주요 재무지표 조회 (DART fnlttCmpnyIndctr.json)
+        — ROE, ROA, EPS, BPS, PER, PBR 등 이미 계산된 지표 제공
+
+        Args:
+            corp_code: 기업 고유번호
+            bsns_year: 사업연도 (YYYY)
+            reprt_code: 보고서 코드
+
+        Returns:
+            주요 재무지표 목록
+        """
+        data = await self._request(
+            "fnlttCmpnyIndctr.json",
+            {"corp_code": corp_code, "bsns_year": bsns_year, "reprt_code": reprt_code},
+        )
+        data["_source"] = {
+            "provider": "DART 주요 재무지표",
+            "business_year": bsns_year,
+            "retrieved_at": datetime.now().isoformat(),
+        }
+        return data
+
     def _get_report_type_name(self, reprt_code: str) -> str:
         """보고서 코드를 이름으로 변환"""
         report_types = {

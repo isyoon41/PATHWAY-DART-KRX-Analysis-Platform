@@ -291,40 +291,108 @@ async def get_ai_report(
     """
     Claude AI 종합 기업분석 리포트
 
-    DART 재무제표 + 공시 데이터를 Claude AI가 분석하여
-    투자자 관점의 종합 리포트를 생성합니다.
+    DART 3개년 재무제표 + 분기 데이터 + 지배구조 + 공시를 Claude AI가 분석하여
+    투자자 관점의 심층 리포트를 생성합니다.
 
     - **corp_code**: 기업 고유번호
-    - **bsns_year**: 사업연도 (기본값: 전년도)
+    - **bsns_year**: 기준 사업연도 (기본값: 전년도). 해당 연도 포함 3개년 수집.
     """
+    import asyncio
+
     try:
-        year = bsns_year or str(datetime.now().year - 1)
+        base_year = int(bsns_year) if bsns_year else datetime.now().year - 1
+        years = [str(base_year), str(base_year - 1), str(base_year - 2)]
+        now = datetime.now()
 
-        # 병렬로 데이터 수집
-        import asyncio
-        company_info, financial_raw, disclosures = await asyncio.gather(
-            dart_service.get_company_info(corp_code),
-            dart_service.get_financial_statement(corp_code, year, "11011"),
-            dart_service.get_disclosure_list(
-                corp_code=corp_code,
-                bgn_de=(datetime.now() - timedelta(days=90)).strftime("%Y%m%d"),
-                end_de=datetime.now().strftime("%Y%m%d"),
-                page_no=1,
-                page_count=20,
-            ),
-            return_exceptions=True
-        )
-
-        if isinstance(company_info, Exception) or company_info.get("status") == "013":
+        # ── 1단계: 기업 기본정보 먼저 확인 ──────────────────────────────
+        company_info = await dart_service.get_company_info(corp_code)
+        if company_info.get("status") == "013":
             raise HTTPException(status_code=404, detail="기업을 찾을 수 없습니다.")
 
-        # 재무 구조화
-        financial_structured = {}
-        if not isinstance(financial_raw, Exception):
-            financial_structured = structure_financial_data(financial_raw)
+        # ── 2단계: 병렬 데이터 수집 ──────────────────────────────────────
+        # 연간 재무제표 3개년
+        annual_tasks = [
+            dart_service.get_financial_statement(corp_code, y, "11011")
+            for y in years
+        ]
 
-        # 시장 데이터 (종목코드 있을 때만)
-        market_data = {}
+        # 분기 데이터 (기준연도 기준)
+        # 당해연도: Q1(11013), 반기(11012), Q3(11014)
+        # 전년도: Q1(11013), 반기(11012), Q3(11014)
+        quarterly_tasks = [
+            dart_service.get_financial_statement(corp_code, str(base_year), "11013"),
+            dart_service.get_financial_statement(corp_code, str(base_year), "11012"),
+            dart_service.get_financial_statement(corp_code, str(base_year), "11014"),
+            dart_service.get_financial_statement(corp_code, str(base_year - 1), "11013"),
+            dart_service.get_financial_statement(corp_code, str(base_year - 1), "11012"),
+            dart_service.get_financial_statement(corp_code, str(base_year - 1), "11014"),
+        ]
+
+        # 지배구조 & 주요지표 (최신연도 기준)
+        governance_tasks = [
+            dart_service.get_major_shareholders(corp_code, years[0], "11011"),
+            dart_service.get_executives(corp_code, years[0], "11011"),
+            dart_service.get_affiliated_companies(corp_code, years[0], "11011"),
+            dart_service.get_key_indicators(corp_code, years[0], "11011"),
+        ]
+
+        # 최근 공시 (6개월)
+        disclosure_task = dart_service.get_disclosure_list(
+            corp_code=corp_code,
+            bgn_de=(now - timedelta(days=180)).strftime("%Y%m%d"),
+            end_de=now.strftime("%Y%m%d"),
+            page_no=1,
+            page_count=30,
+        )
+
+        # 전부 병렬 실행
+        results = await asyncio.gather(
+            *annual_tasks,
+            *quarterly_tasks,
+            *governance_tasks,
+            disclosure_task,
+            return_exceptions=True,
+        )
+
+        # ── 3단계: 결과 분류 ──────────────────────────────────────────────
+        annual_raws   = results[0:3]    # 3개년 연간
+        quarterly_raws = results[3:9]   # 6개 분기
+        shareholders_raw, executives_raw, affiliates_raw, indicators_raw = results[9:13]
+        disclosures = results[13]
+
+        # 연간 재무 구조화 (실패 시 빈 dict)
+        financials_by_year: Dict[str, Any] = {}
+        for i, year in enumerate(years):
+            raw = annual_raws[i]
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_by_year[year] = structure_financial_data(raw)
+            else:
+                financials_by_year[year] = {}
+
+        # 분기 재무 구조화
+        quarterly_labels = [
+            f"{base_year}_Q1", f"{base_year}_H1",
+            f"{base_year}_Q3", f"{base_year-1}_Q1",
+            f"{base_year-1}_H1", f"{base_year-1}_Q3",
+        ]
+        financials_quarterly: Dict[str, Any] = {}
+        for label, raw in zip(quarterly_labels, quarterly_raws):
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_quarterly[label] = structure_financial_data(raw)
+
+        # 지배구조 데이터 (실패 시 None)
+        def safe(r):
+            return r if not isinstance(r, Exception) and r.get("status") not in ("013", "020") else None
+
+        governance_data = {
+            "major_shareholders": safe(shareholders_raw),
+            "executives":         safe(executives_raw),
+            "affiliated_companies": safe(affiliates_raw),
+            "key_indicators":     safe(indicators_raw),
+        }
+
+        # ── 4단계: 시장 데이터 ───────────────────────────────────────────
+        market_data: Dict = {}
         stock_code = company_info.get("stock_code")
         if stock_code:
             try:
@@ -332,21 +400,25 @@ async def get_ai_report(
             except Exception:
                 pass
 
-        # Claude AI 분석 리포트 생성
+        # ── 5단계: Claude AI 분석 ─────────────────────────────────────────
         corp_name = company_info.get("corp_name", corp_code)
         report = claude_service.generate_comprehensive_report(
             corp_name=corp_name,
             company_info=company_info,
-            financial_data=financial_structured,
+            financials_by_year=financials_by_year,
+            financials_quarterly=financials_quarterly,
+            governance_data=governance_data,
             disclosures=disclosures if not isinstance(disclosures, Exception) else {},
             market_data=market_data,
-            bsns_year=year,
+            base_year=str(base_year),
+            years=years,
         )
 
         return {
             "corp_code": corp_code,
             "corp_name": corp_name,
-            "bsns_year": year,
+            "base_year": str(base_year),
+            "years_covered": years,
             **report,
         }
 

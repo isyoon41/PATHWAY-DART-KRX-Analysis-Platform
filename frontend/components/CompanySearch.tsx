@@ -6,7 +6,7 @@ import { companyAPI, CompanySearchResult } from '@/lib/api';
 import SourceBadge from './SourceBadge';
 
 interface CompanySearchProps {
-  onSelectCompany: (corpCode: string, corpName: string) => void;
+  onSelectCompany: (corpCode: string, corpName: string, result: CompanySearchResult) => void;
 }
 
 export default function CompanySearch({ onSelectCompany }: CompanySearchProps) {
@@ -88,7 +88,7 @@ export default function CompanySearch({ onSelectCompany }: CompanySearchProps) {
               <div
                 key={company.corp_code}
                 className="px-6 py-4 hover:bg-blue-50 transition-colors cursor-pointer"
-                onClick={() => onSelectCompany(company.corp_code, company.corp_name)}
+                onClick={() => onSelectCompany(company.corp_code, company.corp_name, company)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3 flex-1">
@@ -117,7 +117,7 @@ export default function CompanySearch({ onSelectCompany }: CompanySearchProps) {
                   <div className="ml-4">
                     <button
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                      onClick={() => onSelectCompany(company.corp_code, company.corp_name)}
+                      onClick={() => onSelectCompany(company.corp_code, company.corp_name, company)}
                     >
                       분석하기
                     </button>
