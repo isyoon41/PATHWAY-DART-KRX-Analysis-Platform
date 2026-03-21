@@ -20,11 +20,33 @@ interface AnalysisConfigProps {
   onBack: () => void;
 }
 
-const YEAR_OPTIONS = (() => {
-  const currentYear = new Date().getFullYear();
-  // 전년도가 기본값; 당해연도는 아직 공시 미완이므로 제외
-  return Array.from({ length: 5 }, (_, i) => String(currentYear - 1 - i));
-})();
+const currentYear = new Date().getFullYear();
+// 선택 가능 연도: 당해연도 포함 최근 10년
+const YEAR_OPTIONS = Array.from({ length: 10 }, (_, i) => String(currentYear - i));
+
+const QTR_OPTIONS = [
+  { value: 1, label: 'Q1 (1~3월)' },
+  { value: 2, label: 'Q2 / 반기 (1~6월)' },
+  { value: 3, label: 'Q3 (1~9월)' },
+  { value: 4, label: 'Q4 / 연간 (1~12월)' },
+];
+
+/** 총 분기 수 미리보기 계산 */
+function calcPeriodSummary(
+  startYear: string, startQtr: number,
+  endYear: string,   endQtr: number,
+): { years: number; quarters: number; valid: boolean } {
+  const sy = Number(startYear), ey = Number(endYear);
+  if (sy > ey || (sy === ey && startQtr > endQtr)) return { years: 0, quarters: 0, valid: false };
+  const years = ey - sy + 1;
+  let quarters = 0;
+  for (let y = sy; y <= ey; y++) {
+    const minQ = y === sy ? startQtr : 1;
+    const maxQ = y === ey ? endQtr   : 4;
+    quarters += maxQ - minQ + 1;
+  }
+  return { years, quarters, valid: true };
+}
 
 const MODULE_OPTIONS = [
   {
@@ -32,7 +54,7 @@ const MODULE_OPTIONS = [
     icon: Brain,
     color: 'purple',
     label: 'AI 종합 리포트',
-    desc: 'Claude AI가 3개년 재무·공시·지배구조를 종합 분석',
+    desc: 'Gemini AI가 3개년 재무·공시·지배구조를 종합 분석',
     badge: 'PREMIUM',
   },
   {
@@ -82,11 +104,12 @@ export default function AnalysisConfig({
   onBack,
 }: AnalysisConfigProps) {
   const toggle = (key: keyof AnalysisOptions) => {
-    if (key === 'bsnsYear') return;
+    if (['startYear','startQtr','endYear','endQtr'].includes(key as string)) return;
     onChange({ ...options, [key]: !options[key as keyof AnalysisOptions] });
   };
 
-  const isValid = options.includeAI || options.includeFinancial || options.includeDisclosures;
+  const summary = calcPeriodSummary(options.startYear, options.startQtr, options.endYear, options.endQtr);
+  const isValid = summary.valid && (options.includeAI || options.includeFinancial || options.includeDisclosures);
 
   return (
     <div className="w-full max-w-2xl mx-auto">
@@ -115,31 +138,79 @@ export default function AnalysisConfig({
         </div>
       </div>
 
-      {/* 기준 연도 */}
+      {/* 분석 기간 */}
       <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-6">
-        <h3 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-blue-600" />
-          분석 기준 연도
+        <h3 className="text-base font-semibold text-gray-900 mb-5 flex items-center gap-2">
+          <Calendar className="w-5 h-5 text-[#2E75B6]" />
+          분석 기간 설정
         </h3>
-        <div className="flex gap-3 flex-wrap">
-          {YEAR_OPTIONS.map((yr) => (
-            <button
-              key={yr}
-              onClick={() => onChange({ ...options, bsnsYear: yr })}
-              className={`px-5 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
-                options.bsnsYear === yr
-                  ? 'bg-blue-600 border-blue-600 text-white shadow-md'
-                  : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
-              }`}
-            >
-              {yr}년
-            </button>
-          ))}
+
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 시작 연도 */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">시작</span>
+            <div className="flex gap-2">
+              <select
+                value={options.startYear}
+                onChange={e => onChange({ ...options, startYear: e.target.value })}
+                className="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold text-gray-800 focus:border-[#2E75B6] focus:outline-none"
+              >
+                {YEAR_OPTIONS.map(y => <option key={y} value={y}>{y}년</option>)}
+              </select>
+              <select
+                value={options.startQtr}
+                onChange={e => onChange({ ...options, startQtr: Number(e.target.value) })}
+                className="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 focus:border-[#2E75B6] focus:outline-none"
+              >
+                {QTR_OPTIONS.map(q => <option key={q.value} value={q.value}>{q.label}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* 구분선 */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] text-transparent select-none">X</span>
+            <span className="text-gray-400 font-bold text-lg px-1 self-center">~</span>
+          </div>
+
+          {/* 종료 연도 */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">종료</span>
+            <div className="flex gap-2">
+              <select
+                value={options.endYear}
+                onChange={e => onChange({ ...options, endYear: e.target.value })}
+                className="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold text-gray-800 focus:border-[#2E75B6] focus:outline-none"
+              >
+                {YEAR_OPTIONS.map(y => <option key={y} value={y}>{y}년</option>)}
+              </select>
+              <select
+                value={options.endQtr}
+                onChange={e => onChange({ ...options, endQtr: Number(e.target.value) })}
+                className="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 focus:border-[#2E75B6] focus:outline-none"
+              >
+                {QTR_OPTIONS.map(q => <option key={q.value} value={q.value}>{q.label}</option>)}
+              </select>
+            </div>
+          </div>
         </div>
-        <p className="mt-3 text-xs text-gray-400 flex items-center gap-1">
-          <Info className="w-3.5 h-3.5" />
-          AI 리포트는 선택 연도 포함 3개년 데이터를 자동 수집합니다
-        </p>
+
+        {/* 수집 예정 미리보기 */}
+        <div className={`mt-4 flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+          summary.valid
+            ? 'bg-[#EBF2FA] text-[#1F3864]'
+            : 'bg-red-50 text-red-600'
+        }`}>
+          <Info className="w-3.5 h-3.5 flex-shrink-0" />
+          {summary.valid
+            ? <>총 <strong>{summary.years}개년</strong> · <strong>{summary.quarters}개 분기</strong> 데이터 수집 &nbsp;—&nbsp;
+               {options.startYear} {QTR_OPTIONS.find(q=>q.value===options.startQtr)?.label.split(' ')[0]}
+               &nbsp;~&nbsp;
+               {options.endYear} {QTR_OPTIONS.find(q=>q.value===options.endQtr)?.label.split(' ')[0]}
+              </>
+            : '종료 시점이 시작 시점보다 앞에 있습니다. 기간을 다시 설정해 주세요.'
+          }
+        </div>
       </div>
 
       {/* 분석 모듈 */}

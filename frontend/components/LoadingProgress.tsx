@@ -43,7 +43,7 @@ function buildSteps(options: AnalysisOptions): Step[] {
     });
     steps.push({
       id: 'ai',
-      label: 'Claude AI 분석 생성',
+      label: 'Gemini AI 분석 생성',
       subLabel: '종합 분석 리포트 작성 중...',
       durationMs: 30000, // AI는 오래 걸림
     });
@@ -207,7 +207,7 @@ export default function LoadingProgress({ options, corpName, isDone }: LoadingPr
       {/* AI 안내 문구 */}
       {options.includeAI && !isDone && (
         <p className="mt-6 text-center text-xs text-gray-400">
-          Claude AI 분석은 데이터 볼륨에 따라 30초~1분이 소요될 수 있습니다
+          Gemini AI 분석은 데이터 볼륨에 따라 30초~1분이 소요될 수 있습니다
         </p>
       )}
     </div>

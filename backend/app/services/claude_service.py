@@ -1,7 +1,7 @@
 """
-Claude API 분석 서비스
+AI 분석 서비스 (Google Gemini 기반)
 
-DART/KRX 데이터를 Claude에게 전달하여
+DART/KRX 데이터를 Gemini에게 전달하여
 투자자 관점의 심층 기업분석 리포트를 생성합니다.
 
 데이터 수준:
@@ -13,7 +13,8 @@ DART/KRX 데이터를 Claude에게 전달하여
   - 시장 데이터: KRX 시세
 """
 import json
-import anthropic
+from google import genai
+from google.genai import types as genai_types
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from config import settings
@@ -301,26 +302,72 @@ def _build_disclosure_context(disclosures: Any) -> str:
     return f"[최근 공시 목록 ({len(disc_list)}건)]\n" + "\n".join(lines)
 
 
+def _build_report_sections_context(sections: Dict[str, Any]) -> str:
+    """
+    dart_parser.py가 분해한 사업보고서 원문 섹션을 Gemini 컨텍스트로 변환.
+
+    각 섹션의 실제 텍스트를 포함하므로 Gemini가 공시 원문을 기반으로
+    사업 내용·경영 전략·감사 의견을 직접 분석할 수 있다.
+    """
+    if not sections:
+        return "[사업보고서 원문: 수집 불가 — 공시 목록에 사업보고서 없거나 HTML 파싱 실패]"
+
+    SECTION_LABELS = {
+        "company_overview": "Ⅰ. 회사의 개요",
+        "business_content": "Ⅱ. 사업의 내용",
+        "mda":              "Ⅳ. 이사의 경영진단 및 분석의견 (MD&A)",
+        "audit_opinion":    "Ⅴ. 감사인의 감사의견",
+    }
+
+    parts = []
+    rcept_info = ""
+    for code, data in sections.items():
+        label    = SECTION_LABELS.get(code, code)
+        rcept_dt = data.get("rcept_dt", "")
+        rcept_no = data.get("rcept_no", "")
+        if not rcept_info and rcept_dt:
+            rcept_info = f"접수일: {rcept_dt} / 접수번호: {rcept_no}"
+
+        content    = data.get("content", "").strip()
+        char_count = data.get("char_count", 0)
+        excerpt_len = len(content)
+
+        header = (
+            f"[사업보고서 원문 — {label}]\n"
+            f"({rcept_info} / 원문 {char_count:,}자 중 {excerpt_len:,}자 발췌)\n"
+            f"{'─' * 60}\n"
+        )
+        parts.append(header + content)
+
+    return (
+        "\n\n[★ 사업보고서 원문 발췌 — 아래 내용은 DART 공시 원문 직접 인용입니다]\n\n"
+        + "\n\n".join(parts)
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 # 서비스 클래스
 # ──────────────────────────────────────────────────────────────────────
 
 class ClaudeAnalysisService:
-    """Claude API를 활용한 기업분석 서비스"""
+    """Google Gemini API를 활용한 기업분석 서비스"""
 
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        self.model = settings.claude_model
+        self.client = genai.Client(api_key=settings.google_api_key)
+        self.model_name = settings.gemini_model
 
-    def _call(self, prompt: str, max_tokens: int = 4096) -> str:
-        """동기 Claude API 호출 (with extended timeout via httpx)"""
-        message = self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
+    def _call(self, prompt: str, max_tokens: int = 8192) -> str:
+        """Gemini API 호출"""
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                max_output_tokens=max_tokens,
+                temperature=0.3,
+            ),
         )
-        return message.content[0].text
+        return response.text
 
     def generate_comprehensive_report(
         self,
@@ -330,6 +377,7 @@ class ClaudeAnalysisService:
         financials_quarterly: Dict[str, Any],
         governance_data: Dict[str, Any],
         disclosures: Any,
+        report_sections: Dict[str, Any],   # ← 사업보고서 원문 섹션 (NEW)
         market_data: Dict,
         base_year: str,
         years: List[str],
@@ -337,20 +385,60 @@ class ClaudeAnalysisService:
         """
         종합 기업분석 리포트 생성
 
-        수집된 3개년 + 분기 + 지배구조 데이터를 컨텍스트로 구성하여
-        Claude AI에게 전달하고 투자자용 심층 리포트를 생성합니다.
+        수집된 3개년 + 분기 + 지배구조 + 사업보고서 원문 섹션 데이터를 컨텍스트로
+        구성하여 Gemini에게 전달하고 투자자용 심층 리포트를 생성합니다.
         """
         # ── 컨텍스트 조립 ────────────────────────────────────────────
         context_parts = []
 
+        # corp_cls → 상장시장 변환 (Y=KOSPI, K=KOSDAQ, N=KONEX, E=비상장)
+        # companies.py에서 네이버 금융으로 보강된 값이 우선 사용됨
+        corp_cls_map = {
+            'Y': 'KOSPI (유가증권시장)',
+            'K': 'KOSDAQ (코스닥시장)',
+            'N': 'KONEX (코넥스시장)',
+            'E': '비상장',
+        }
+        corp_cls    = company_info.get('corp_cls', '')
+        stock_code  = company_info.get('stock_code', '')
+        listing_dt  = company_info.get('listing_dt', '') or ''
+        market_name = company_info.get('market_name', '')  # 네이버에서 보강된 값
+
+        if market_name:
+            # 네이버/Yahoo 금융에서 직접 확인된 시장명 (가장 신뢰)
+            market_type = market_name
+        elif corp_cls in corp_cls_map:
+            market_type = corp_cls_map[corp_cls]
+        elif stock_code:
+            # 종목코드 있음 → 상장사이나 시장 구분 미제공
+            market_type = '상장 (시장구분 확인 필요)'
+        elif listing_dt:
+            # 상장일이 있으면 상장 이력은 있음
+            market_type = f'상장 이력 있음 (상장일: {listing_dt})'
+        else:
+            market_type = '비상장'
+
+        # 상장일: DART listing_dt가 None인 경우 보완값 또는 안내문구 사용
+        listing_dt_raw  = company_info.get('listing_dt') or ''
+        listing_dt_note = company_info.get('_listing_dt_source', '')
+        if listing_dt_raw:
+            listing_dt_display = (
+                f"{listing_dt_raw} ({'DART 직접 제공' if not listing_dt_note else listing_dt_note})"
+            )
+        elif market_type == '비상장':
+            listing_dt_display = '해당 없음 (비상장)'
+        else:
+            listing_dt_display = 'DART 미제공 (상장사이나 DART 기업정보에 상장일 누락)'
+
         # 기업 기본정보
         context_parts.append(f"""[기업 기본정보]
 기업명: {company_info.get('corp_name', corp_name)}
-종목코드: {company_info.get('stock_code', 'N/A')}
+종목코드: {stock_code if stock_code else '없음 (비상장)'}
+상장시장: {market_type}
 업종코드: {company_info.get('induty_code', 'N/A')}
 대표이사: {company_info.get('ceo_nm', 'N/A')}
 설립일: {company_info.get('est_dt', 'N/A')}
-상장일: {company_info.get('listing_dt', 'N/A')}
+상장일: {listing_dt_display}
 홈페이지: {company_info.get('hm_url', 'N/A')}
 결산월: {company_info.get('acc_mt', 'N/A')}""")
 
@@ -363,8 +451,11 @@ class ClaudeAnalysisService:
         # 지배구조
         context_parts.append(_build_governance_context(governance_data))
 
-        # 최근 공시
+        # 최근 공시 목록 (제목/날짜 메타데이터)
         context_parts.append(_build_disclosure_context(disclosures))
+
+        # 사업보고서 원문 섹션 (실제 공시 텍스트 — 핵심 컨텍스트)
+        context_parts.append(_build_report_sections_context(report_sections))
 
         # 시장 데이터
         if market_data and "error" not in market_data:
@@ -386,21 +477,23 @@ class ClaudeAnalysisService:
             analysis_date=datetime.now().strftime("%Y년 %m월 %d일"),
         )
 
-        report_text = self._call(prompt, max_tokens=6000)
+        report_text = self._call(prompt, max_tokens=32768)
 
         return {
             "report": report_text,
             "generated_at": datetime.now().isoformat(),
-            "model": self.model,
+            "model": self.model_name,
             "data_coverage": {
                 "annual_years": years,
                 "quarterly_periods": list(financials_quarterly.keys()),
                 "has_governance": any(v is not None for v in governance_data.values()),
                 "disclosure_count": len(disclosures.get("list", [])) if isinstance(disclosures, dict) else 0,
+                "report_sections_parsed": list(report_sections.keys()),   # 분해된 섹션 목록
+                "annual_report_read": bool(report_sections),              # 원문 읽었는지 여부
             },
             "_source": {
-                "provider": "Claude AI 분석 (DART·KRX 데이터 기반)",
-                "model": self.model,
+                "provider": "Gemini AI 분석 (DART·KRX 데이터 기반)",
+                "model": self.model_name,
                 "data_sources": ["DART 전자공시시스템", "KRX 한국거래소"],
                 "generated_at": datetime.now().isoformat(),
             },

@@ -1,0 +1,7 @@
+{
+  "name": "pathwaypartners-dart-analysis-platform",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "regions": ["icn1"]
+}

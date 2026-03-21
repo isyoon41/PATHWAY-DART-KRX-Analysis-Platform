@@ -61,6 +61,22 @@ async def get_company_info(
         if company_info.get("status") == "013":
             raise HTTPException(status_code=404, detail="기업 정보를 찾을 수 없습니다.")
 
+        # ── 상장시장 보강: DART corp_cls가 비어있으면 네이버 금융으로 재확인 ─
+        stock_code = company_info.get("stock_code", "")
+        corp_cls   = company_info.get("corp_cls", "")
+        if stock_code and not corp_cls:
+            try:
+                stock_info = await krx_service.get_stock_info(stock_code)
+                # 네이버/Yahoo 응답에 'market_code' 가 있으면 corp_cls 보정
+                market_code = stock_info.get("market_code", "")
+                code_map = {"KS": "Y", "KQ": "K", "KN": "N"}
+                if market_code in code_map:
+                    company_info["corp_cls"]       = code_map[market_code]
+                    company_info["market_name"]    = stock_info.get("market", "")
+                    company_info["_market_source"] = stock_info.get("_source", {}).get("provider", "")
+            except Exception:
+                pass  # 보강 실패해도 기본 정보는 반환
+
         return company_info
     except HTTPException:
         raise
@@ -71,8 +87,8 @@ async def get_company_info(
 @router.get("/{corp_code}/disclosures")
 async def get_disclosures(
     corp_code: str,
-    bgn_de: str = Query(..., description="시작일 (YYYYMMDD)", regex=r"^\d{8}$"),
-    end_de: str = Query(..., description="종료일 (YYYYMMDD)", regex=r"^\d{8}$"),
+    bgn_de: str = Query(..., description="시작일 (YYYYMMDD)", pattern=r"^\d{8}$"),
+    end_de: str = Query(..., description="종료일 (YYYYMMDD)", pattern=r"^\d{8}$"),
     page_no: int = Query(1, description="페이지 번호", ge=1),
     page_count: int = Query(10, description="페이지당 건수", ge=1, le=100)
 ):
@@ -108,7 +124,7 @@ async def get_disclosures(
 @router.get("/{corp_code}/financial")
 async def get_financial_statement(
     corp_code: str,
-    bsns_year: str = Query(..., description="사업연도 (YYYY)", regex=r"^\d{4}$"),
+    bsns_year: str = Query(..., description="사업연도 (YYYY)", pattern=r"^\d{4}$"),
     reprt_code: str = Query("11011", description="보고서 코드 (11011: 사업보고서, 11012: 반기, 11013: 1분기, 11014: 3분기)")
 ):
     """

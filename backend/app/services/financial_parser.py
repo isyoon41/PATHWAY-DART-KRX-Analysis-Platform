@@ -25,8 +25,8 @@ import re
 ACCOUNT_MAPPING = {
     # 손익계산서 (IS)
     "revenue": {
-        "names": ["매출액", "수익(매출액)", "영업수익"],
-        "ids":   ["ifrs-full_Revenue", "ifrs-full_GrossProfit"],
+        "names": ["매출액", "수익(매출액)", "영업수익", "매출"],
+        "ids":   ["ifrs-full_Revenue", "dart_Revenue"],
         "statement": "IS",
     },
     "cost_of_sales": {
@@ -35,7 +35,7 @@ ACCOUNT_MAPPING = {
         "statement": "IS",
     },
     "gross_profit": {
-        "names": ["매출총이익"],
+        "names": ["매출총이익", "매출총손익"],
         "ids":   ["ifrs-full_GrossProfit"],
         "statement": "IS",
     },
@@ -141,16 +141,30 @@ def find_account_value(
         "two_years_ago": "bfefrmtrm_amount",
     }.get(period, "thstrm_amount")
 
+    # 1차: 정확한 account_id 매칭
     for item in dart_list:
         account_id = item.get("account_id", "")
+        if account_id in mapping["ids"]:
+            val = parse_amount(item.get(period_field, ""))
+            if val is not None:
+                return val
+
+    # 2차: 계정명 정확 매칭 (account_detail이 "-"인 항목 우선)
+    for item in dart_list:
         account_nm = item.get("account_nm", "")
+        account_detail = item.get("account_detail", "-")
+        if account_nm in mapping["names"] and account_detail == "-":
+            val = parse_amount(item.get(period_field, ""))
+            if val is not None:
+                return val
 
-        # ID 기반 매칭 우선, 없으면 계정명 기반
-        id_match  = any(aid in account_id for aid in mapping["ids"])
-        name_match = account_nm in mapping["names"]
-
-        if id_match or name_match:
-            return parse_amount(item.get(period_field, ""))
+    # 3차: 계정명 매칭 (account_detail 무관)
+    for item in dart_list:
+        account_nm = item.get("account_nm", "")
+        if account_nm in mapping["names"]:
+            val = parse_amount(item.get(period_field, ""))
+            if val is not None:
+                return val
 
     return None
 

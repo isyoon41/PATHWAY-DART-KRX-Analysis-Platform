@@ -21,9 +21,13 @@ class Settings(BaseSettings):
     krx_api_key: str = ""
     krx_base_url: str = "https://openapi.krx.co.kr/contents/COM/GenerateOTP.jspx"
 
-    # Claude API (Anthropic)
+    # Anthropic (Claude) — 선택적
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
+
+    # Google Gemini
+    google_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash-preview-04-17"
 
     # CORS
     allowed_origins: str = "http://localhost:3000"

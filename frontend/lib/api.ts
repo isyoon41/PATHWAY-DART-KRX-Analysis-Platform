@@ -1,8 +1,13 @@
 import axios from 'axios';
 
-// rewrites() 덕분에 /api/* → localhost:8000/api/* 로 프록시됨
+// 백엔드 URL: 환경변수 NEXT_PUBLIC_BACKEND_URL 우선, 없으면 localhost:8000
+// Vercel 배포 시: NEXT_PUBLIC_BACKEND_URL 을 백엔드 서버 주소로 설정
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
 const api = axios.create({
-  baseURL: '',
+  baseURL: BACKEND_URL,
+  timeout: 120_000,           // 2분 타임아웃
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -83,8 +88,8 @@ export interface FinancialPeriod {
 }
 
 export interface FinancialData {
-  periods?: string[];
-  income_statement?: { current: FinancialPeriod; previous: FinancialPeriod };
+  periods?: { current: string; previous: string; two_years_ago?: string };
+  income_statement?: { current: FinancialPeriod; previous: FinancialPeriod; two_years_ago?: FinancialPeriod };
   balance_sheet?: { current: FinancialPeriod; previous: FinancialPeriod };
   cash_flow?: { current: FinancialPeriod; previous: FinancialPeriod };
   ratios?: {
@@ -157,7 +162,10 @@ export interface AIReportData {
 // 분석 설정
 // ─────────────────────────────────────────────
 export interface AnalysisOptions {
-  bsnsYear: string;
+  startYear: string;   // 분석 시작 연도 (예: "2021")
+  startQtr: number;    // 시작 분기 1~4
+  endYear: string;     // 분석 종료 연도 (예: "2024")
+  endQtr: number;      // 종료 분기 1~4
   includeAI: boolean;
   includeFinancial: boolean;
   includeDisclosures: boolean;
@@ -204,21 +212,31 @@ export const analysisAPI = {
     includeFinancial = true,
     includeDisclosures = true,
     includeMarketData = true,
+    endYear?: string,
   ): Promise<ComprehensiveAnalysis> => {
     const response = await api.get(`/api/analysis/${corpCode}/comprehensive`, {
       params: {
         include_financial: includeFinancial,
         include_disclosures: includeDisclosures,
         include_market_data: includeMarketData,
+        ...(endYear ? { bsns_year: endYear } : {}),
       },
     });
     return response.data;
   },
 
-  getAIReport: async (corpCode: string, bsnsYear?: string): Promise<AIReportData> => {
+  getAIReport: async (
+    corpCode: string,
+    opts: { startYear?: string; startQtr?: number; endYear?: string; endQtr?: number } = {},
+  ): Promise<AIReportData> => {
+    const params: Record<string, string | number> = {};
+    if (opts.startYear) params.start_year = Number(opts.startYear);
+    if (opts.startQtr)  params.start_qtr  = opts.startQtr;
+    if (opts.endYear)   params.end_year   = Number(opts.endYear);
+    if (opts.endQtr)    params.end_qtr    = opts.endQtr;
     const response = await api.get(`/api/analysis/${corpCode}/ai-report`, {
-      params: bsnsYear ? { bsns_year: bsnsYear } : {},
-      timeout: 180_000, // Claude 분석은 최대 3분 허용
+      params,
+      timeout: 180_000, // Gemini 분석은 최대 3분 허용
     });
     return response.data;
   },
