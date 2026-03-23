@@ -7,7 +7,7 @@ from app.services.krx_service import krx_service
 from app.services.dart_parser import create_parser, analyzer as section_analyzer
 from app.services.financial_parser import structure_financial_data
 from app.services.claude_service import claude_service
-from app.services.module_service import module_service, MODULES
+from app.services.module_service import module_service, MODULES, MODULE_ID_ALIAS
 from config import settings
 
 router = APIRouter()
@@ -572,10 +572,12 @@ async def get_stock_history(
 
 @router.get("/modules/list")
 async def list_modules():
-    """분석 모듈 목록 반환"""
+    """분석 모듈 목록 반환 (VC/PE 강화형 v2)"""
     return {
-        "modules": list(MODULES.values()),
-        "total": len(MODULES),
+        "modules":       list(MODULES.values()),
+        "total":         len(MODULES),
+        "prompt_pack":   "darty_vcpe_investment_analysis_modules v2.0",
+        "output_format": "strict JSON (module_output_json_skeleton)",
     }
 
 
@@ -586,13 +588,26 @@ async def run_module_analysis(
     end_year:  str = Query("", description="종료 연도 (YYYY)"),
 ):
     """
-    단일 분석 모듈 실행
+    단일 분석 모듈 실행 (VC/PE 프롬프트 팩 v2)
 
-    사업보고서 해당 섹션만 읽어 집중 분석합니다.
-    종합 분석 대비 품질이 높고 처리 시간이 짧습니다.
+    담당 섹션(S1~S11)만 읽어 strict JSON 결과를 반환합니다.
+    구 모듈 ID(예: comprehensive, key_financials)도 자동 변환되어 호환됩니다.
+
+    **출력 형식**: `module_output_json_skeleton` 기준 JSON
+    - `one_line_summary`: 한 줄 요약
+    - `scorecard`: 성장성/수익성/현금창출/자본효율/거버넌스 점수
+    - `positive_signals` / `negative_signals`: 투자 판단 시사점
+    - `vc_view` / `pe_view`: VC·PE 관점 분리 해석
+    - `recommended_action`: 즉시검토·보류 등 액션
     """
-    if module_id not in MODULES:
-        raise HTTPException(status_code=400, detail=f"알 수 없는 모듈: {module_id}. 가능한 모듈: {list(MODULES.keys())}")
+    # 구 ID → 신 ID 자동 변환
+    real_id = MODULE_ID_ALIAS.get(module_id, module_id)
+    if real_id not in MODULES:
+        all_ids = list(MODULES.keys()) + list(MODULE_ID_ALIAS.keys())
+        raise HTTPException(
+            status_code=400,
+            detail=f"알 수 없는 모듈: {module_id}. 가능한 모듈: {list(MODULES.keys())}",
+        )
 
     base_year  = int(end_year) if end_year.isdigit() else datetime.now().year - 1
     years      = [str(base_year), str(base_year - 1), str(base_year - 2)]
@@ -640,9 +655,15 @@ async def run_module_analysis(
             except Exception:
                 pass
 
-        # 일자별 주가 이력 (stock_movement 모듈 전용 — FDR/Yahoo)
+        # 일자별 주가 이력 — S11 포함 모듈 전체에 제공 (FDR/Yahoo)
         stock_history: Dict = {}
-        if module_id == "stock_movement" and stock_code:
+        s11_modules = {
+            "stock_price_movement_analysis", "stock_movement",
+            "comprehensive_corporate_analysis", "comprehensive",
+            "paid_in_capital_increase", "capital_increase",
+            "preliminary_results", "preliminary",
+        }
+        if stock_code and (real_id in s11_modules or module_id in s11_modules):
             try:
                 hist_start = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
                 hist_end   = date.today().strftime("%Y-%m-%d")
@@ -671,6 +692,166 @@ async def run_module_analysis(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"모듈 분석 오류: {str(e)}")
+
+
+@router.post("/{corp_code}/meta-analysis")
+async def run_meta_analysis(
+    corp_code: str = Path(..., description="기업 고유번호"),
+    end_year:  str = Query("", description="종료 연도 (YYYY, 기본값: 전년도)"),
+) -> Dict[str, Any]:
+    """
+    VC/PE 심층 종합 기업분석 (메타 분석)
+
+    9개 분석 모듈을 병렬 실행 후 메타 AI(deep_composite_investment_analysis)가
+    모듈 간 충돌 신호를 포함한 투자위원회 수준의 종합 판단을 생성합니다.
+
+    **처리 시간**: 3~8분 소요 (9 모듈 + 1 메타 = 10 LLM 호출)
+
+    **출력 형식**: `meta_output_json_skeleton` 기준 JSON
+    - `core_investment_thesis`: 핵심 투자 논지
+    - `company_type_assessment`: 성장형/운영개선형/관찰/회피 판단
+    - `cross_module_conflicts`: 모듈 간 충돌 신호
+    - `vc_conclusion` / `pe_conclusion`: VC·PE 분리 결론
+    - `recommended_action`: 최종 액션
+    """
+    from datetime import date as _date
+
+    base_year = int(end_year) if end_year.isdigit() else datetime.now().year - 1
+    years     = [str(base_year), str(base_year - 1), str(base_year - 2)]
+
+    # ── 1. 데이터 수집 ──────────────────────────────────────────────
+    try:
+        disc_start = (_date.today() - timedelta(days=365 * 4)).strftime("%Y%m%d")
+        disc_end   = _date.today().strftime("%Y%m%d")
+
+        gather_results = await asyncio.gather(
+            dart_service.get_company_info(corp_code),
+            dart_service.get_financial_statement(corp_code, years[0], "11011"),
+            dart_service.get_financial_statement(corp_code, years[1], "11011"),
+            dart_service.get_financial_statement(corp_code, years[2], "11011"),
+            dart_service.get_major_shareholders(corp_code, str(base_year)),
+            dart_service.get_executives(corp_code, str(base_year)),
+            dart_service.get_disclosure_list(
+                corp_code, bgn_de=disc_start, end_de=disc_end, page_count=50
+            ),
+            return_exceptions=True,
+        )
+
+        company_info = gather_results[0] if not isinstance(gather_results[0], Exception) else {}
+        financials_by_year: Dict = {}
+        for i, year in enumerate(years):
+            raw = gather_results[1 + i]
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_by_year[year] = structure_financial_data(raw)
+
+        def _safe(r):
+            return r if not isinstance(r, Exception) and r.get("status") not in ("013", "020") else None
+
+        governance_data = {
+            "major_shareholders": _safe(gather_results[4]),
+            "executives":         _safe(gather_results[5]),
+        }
+        disc_raw  = gather_results[6]
+        disc_list = disc_raw.get("list", []) if not isinstance(disc_raw, Exception) else []
+
+        # 주가 데이터
+        market_data: Dict = {}
+        stock_history: Dict = {}
+        stock_code = company_info.get("stock_code", "")
+        if stock_code:
+            try:
+                market_data = await krx_service.get_stock_price(stock_code)
+            except Exception:
+                pass
+            try:
+                hist_start = (_date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+                hist_end   = _date.today().strftime("%Y-%m-%d")
+                stock_history = await krx_service.get_stock_history(
+                    stock_code, hist_start, hist_end
+                )
+            except Exception:
+                pass
+
+        # ── 2. 9개 모듈 병렬 실행 ──────────────────────────────────
+        ALL_MODULE_IDS = [
+            "comprehensive_corporate_analysis",
+            "key_financial_indicators",
+            "complete_financial_statements",
+            "business_segment_performance",
+            "shareholder_structure",
+            "board_executive_analysis",
+            "stock_price_movement_analysis",
+            "paid_in_capital_increase",
+            "preliminary_results",
+        ]
+        # S11(시장데이터) 사용 모듈에만 stock_history 전달
+        _S11_MODULES = {
+            "comprehensive_corporate_analysis",
+            "stock_price_movement_analysis",
+            "paid_in_capital_increase",
+            "preliminary_results",
+        }
+
+        module_tasks = [
+            module_service.run_module(
+                module_id=mid,
+                corp_code=corp_code,
+                company_info=company_info,
+                end_year=str(base_year),
+                years=years,
+                financials_by_year=financials_by_year,
+                financials_quarterly={},
+                governance_data=governance_data,
+                disc_list=disc_list,
+                market_data=market_data,
+                stock_history=stock_history if mid in _S11_MODULES else None,
+            )
+            for mid in ALL_MODULE_IDS
+        ]
+
+        module_raw_results = await asyncio.gather(*module_tasks, return_exceptions=True)
+
+        # ── 3. 모듈 결과 정리 ──────────────────────────────────────
+        module_outputs: Dict[str, Any]  = {}
+        module_summaries: Dict[str, Any] = {}
+        for mid, res in zip(ALL_MODULE_IDS, module_raw_results):
+            if not isinstance(res, Exception) and "result" in res:
+                module_outputs[mid] = res["result"]
+                module_summaries[mid] = {
+                    "module_name":        res.get("module_name"),
+                    "status":             "success",
+                    "one_line_summary":   res["result"].get("one_line_summary", ""),
+                    "recommended_action": res["result"].get("recommended_action", ""),
+                    "confidence":         res["result"].get("confidence"),
+                }
+            else:
+                module_outputs[mid] = {}
+                module_summaries[mid] = {
+                    "status": "failed",
+                    "error":  str(res) if isinstance(res, Exception) else "분석 실패",
+                }
+
+        # ── 4. 메타 종합 분석 ───────────────────────────────────────
+        meta_result = await module_service.run_meta_analysis(
+            corp_code=corp_code,
+            company_info=company_info,
+            end_year=str(base_year),
+            years=years,
+            module_outputs=module_outputs,
+        )
+
+        return {
+            "corp_code":        corp_code,
+            "corp_name":        company_info.get("corp_name"),
+            "base_year":        str(base_year),
+            "years_covered":    years,
+            "module_summaries": module_summaries,
+            "module_outputs":   module_outputs,
+            **meta_result,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"메타 분석 오류: {str(e)}")
 
 
 def _reprt_code_to_name(code: str) -> str:
