@@ -1,10 +1,15 @@
 """
-주가/시장 데이터 서비스 — 3단계 폴백 체인
+주가/시장 데이터 서비스 — 4단계 폴백 체인
 
-우선순위:
-  1️⃣  KRX Open API      (공식, 2단계 OTP 인증 — IP 화이트리스트 등록 후 활성화)
-  2️⃣  네이버 금융 API   (비공식, 현재 주 사용 중 — KOSPI/KOSDAQ 구분 포함)
-  3️⃣  Yahoo Finance     (yfinance — 네이버 실패 시 최종 폴백)
+현재가 우선순위:
+  1️⃣  KRX Open API         (공식, 2단계 OTP 인증 — IP 화이트리스트 등록 후 활성화)
+  2️⃣  네이버 금융 API      (비공식, 현재 주 사용 중 — KOSPI/KOSDAQ 구분 포함)
+  3️⃣  FinanceDataReader    (한국 주식 특화 패키지 — 네이버 실패 시 폴백)
+  4️⃣  Yahoo Finance        (yfinance — 최종 폴백)
+
+일자별 OHLCV 우선순위:
+  1️⃣  FinanceDataReader    (주력 — 한국 주식 특화, OHLCV 정확)
+  2️⃣  Yahoo Finance        (yfinance — FDR 실패 시 폴백)
 
 상장시장 구분(KOSPI/KOSDAQ)은 네이버 API의 stockExchangeType.name 필드를 사용.
 KRX API IP 등록 완료 후에는 1️⃣ 이 자동으로 우선 사용됩니다.
@@ -13,7 +18,7 @@ import asyncio
 import httpx
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import settings
 
 
@@ -97,7 +102,53 @@ class KRXService:
         }
 
     # ────────────────────────────────────────────────────────────────────
-    # 3️⃣  Yahoo Finance (yfinance) — 최종 폴백
+    # 3️⃣  FinanceDataReader (FDR) — 네이버 실패 시 폴백
+    # ────────────────────────────────────────────────────────────────────
+    async def _fetch_fdr_stock(self, stock_code: str) -> Dict:
+        """
+        FinanceDataReader로 현재가 조회.
+        장중에는 Close 컬럼에 실시간 종가가 들어 있음.
+        """
+        loop = asyncio.get_event_loop()
+
+        def _sync_fetch():
+            try:
+                import FinanceDataReader as fdr
+            except ImportError:
+                return None
+            try:
+                df = fdr.DataReader(stock_code)
+                if df is None or df.empty:
+                    return None
+                latest = df.iloc[-1]
+                price = latest.get("Close") or latest.get("close")
+                if not price:
+                    return None
+                return {
+                    "stock_code":    stock_code,
+                    "company_name":  "",
+                    "current_price": f"{int(price):,}",
+                    "change":        "N/A",
+                    "change_pct":    "N/A",
+                    "market_cap":    "N/A",
+                    "volume":        f"{int(latest.get('Volume', 0) or 0):,}",
+                    "market":        "N/A",
+                    "market_code":   "N/A",
+                    "listed":        True,
+                    "_source": {
+                        "provider":     "FinanceDataReader",
+                        "retrieved_at": datetime.now().isoformat(),
+                    },
+                }
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            result = await loop.run_in_executor(executor, _sync_fetch)
+        return result or {}
+
+    # ────────────────────────────────────────────────────────────────────
+    # 4️⃣  Yahoo Finance (yfinance) — 최종 폴백
     # ────────────────────────────────────────────────────────────────────
     async def _fetch_yahoo_stock(self, stock_code: str) -> Dict:
         """
@@ -182,9 +233,17 @@ class KRXService:
         try:
             return await self._fetch_naver_stock(stock_code)
         except Exception:
-            pass  # 네이버 실패 → Yahoo로 폴백
+            pass  # 네이버 실패 → FDR로 폴백
 
-        # 3️⃣ Yahoo Finance
+        # 3️⃣ FinanceDataReader
+        try:
+            result = await self._fetch_fdr_stock(stock_code)
+            if result and "error" not in result:
+                return result
+        except Exception:
+            pass  # FDR 실패 → Yahoo로 폴백
+
+        # 4️⃣ Yahoo Finance
         try:
             result = await self._fetch_yahoo_stock(stock_code)
             if result:
@@ -194,7 +253,7 @@ class KRXService:
 
         # 모든 소스 실패
         return {
-            "error":      "모든 주가 데이터 소스 실패 (KRX 403 / Naver / Yahoo)",
+            "error":      "모든 주가 데이터 소스 실패 (KRX 403 / Naver / FDR / Yahoo)",
             "stock_code": stock_code,
             "_source":    {"provider": "없음", "retrieved_at": datetime.now().isoformat()},
         }
@@ -205,6 +264,118 @@ class KRXService:
         get_stock_price()와 동일한 폴백 체인 사용.
         """
         return await self.get_stock_price(stock_code)
+
+    async def get_stock_history(
+        self,
+        stock_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict:
+        """
+        일자별 OHLCV 데이터 조회 — FDR 주력, Yahoo Finance 폴백.
+
+        Args:
+            stock_code: 종목코드 (예: 005930)
+            start_date: 시작일 (YYYYMMDD 또는 YYYY-MM-DD, 기본값: 1년 전)
+            end_date:   종료일 (YYYYMMDD 또는 YYYY-MM-DD, 기본값: 오늘)
+        """
+        loop = asyncio.get_event_loop()
+
+        def _normalize(d: Optional[str]) -> Optional[str]:
+            if not d:
+                return None
+            d = d.strip()
+            if len(d) == 8 and d.isdigit():
+                return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+            return d
+
+        start = _normalize(start_date) or (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        end   = _normalize(end_date)   or datetime.now().strftime("%Y-%m-%d")
+
+        def _to_records(df) -> Optional[list]:
+            if df is None or df.empty:
+                return None
+            df = df.reset_index()
+            records = []
+            for _, row in df.iterrows():
+                date_val = row.get("Date") or row.get("date") or row.get("Datetime")
+                if hasattr(date_val, "strftime"):
+                    date_str = date_val.strftime("%Y-%m-%d")
+                else:
+                    date_str = str(date_val)[:10]
+                records.append({
+                    "date":   date_str,
+                    "open":   float(row.get("Open",   0) or 0),
+                    "high":   float(row.get("High",   0) or 0),
+                    "low":    float(row.get("Low",    0) or 0),
+                    "close":  float(row.get("Close",  0) or 0),
+                    "volume": int(row.get("Volume",   0) or 0),
+                })
+            return records if records else None
+
+        # 1️⃣ FinanceDataReader (주력)
+        def _sync_fdr():
+            try:
+                import FinanceDataReader as fdr
+                df = fdr.DataReader(stock_code, start, end)
+                return _to_records(df)
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            records = await loop.run_in_executor(executor, _sync_fdr)
+
+        if records:
+            return {
+                "stock_code": stock_code,
+                "start_date": start,
+                "end_date":   end,
+                "records":    records,
+                "count":      len(records),
+                "_source": {
+                    "provider":     "FinanceDataReader",
+                    "retrieved_at": datetime.now().isoformat(),
+                },
+            }
+
+        # 2️⃣ Yahoo Finance 폴백
+        def _sync_yahoo():
+            try:
+                import yfinance as yf
+            except ImportError:
+                return None, None
+            for suffix, market in [(".KS", "KOSPI"), (".KQ", "KOSDAQ")]:
+                try:
+                    ticker = yf.Ticker(f"{stock_code}{suffix}")
+                    df = ticker.history(start=start, end=end)
+                    recs = _to_records(df)
+                    if recs:
+                        return recs, f"Yahoo Finance (yfinance · {stock_code}{suffix})"
+                except Exception:
+                    continue
+            return None, None
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            records, provider = await loop.run_in_executor(executor, _sync_yahoo)
+
+        if records:
+            return {
+                "stock_code": stock_code,
+                "start_date": start,
+                "end_date":   end,
+                "records":    records,
+                "count":      len(records),
+                "_source": {
+                    "provider":     provider,
+                    "retrieved_at": datetime.now().isoformat(),
+                },
+            }
+
+        return {
+            "error":      "일자별 주가 데이터 조회 실패 (FDR / Yahoo Finance)",
+            "stock_code": stock_code,
+            "_source":    {"provider": "없음", "retrieved_at": datetime.now().isoformat()},
+        }
 
     # ────────────────────────────────────────────────────────────────────
     # KRX 전용 메서드 (IP 등록 후 활성화)

@@ -528,6 +528,48 @@ async def get_ai_report(
         raise HTTPException(status_code=500, detail=f"AI 리포트 생성 중 오류: {str(e)}")
 
 
+@router.get("/{corp_code}/stock-history")
+async def get_stock_history(
+    corp_code: str = Path(..., description="기업 고유번호"),
+    start_date: str = Query("", description="시작일 (YYYYMMDD 또는 YYYY-MM-DD, 기본값: 1년 전)"),
+    end_date:   str = Query("", description="종료일 (YYYYMMDD 또는 YYYY-MM-DD, 기본값: 오늘)"),
+) -> Dict[str, Any]:
+    """
+    일자별 주가 이력 (OHLCV)
+
+    FinanceDataReader → Yahoo Finance 폴백 체인으로
+    일자별 시가·고가·저가·종가·거래량을 반환합니다.
+
+    - **start_date** / **end_date**: 조회 기간 (미입력 시 최근 1년)
+    - 장중 조회 시 당일 Close 컬럼에 실시간 종가가 포함됩니다.
+    """
+    try:
+        company_info = await dart_service.get_company_info(corp_code)
+        if company_info.get("status") == "013":
+            raise HTTPException(status_code=404, detail="기업을 찾을 수 없습니다.")
+
+        stock_code = company_info.get("stock_code")
+        if not stock_code:
+            raise HTTPException(status_code=422, detail="상장 종목코드가 없는 기업입니다.")
+
+        history = await krx_service.get_stock_history(
+            stock_code,
+            start_date or None,
+            end_date   or None,
+        )
+        return {
+            "corp_name":  company_info.get("corp_name"),
+            "corp_code":  corp_code,
+            "stock_code": stock_code,
+            **history,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"주가 이력 조회 중 오류: {str(e)}")
+
+
 @router.get("/modules/list")
 async def list_modules():
     """분석 모듈 목록 반환"""
@@ -598,6 +640,18 @@ async def run_module_analysis(
             except Exception:
                 pass
 
+        # 일자별 주가 이력 (stock_movement 모듈 전용 — FDR/Yahoo)
+        stock_history: Dict = {}
+        if module_id == "stock_movement" and stock_code:
+            try:
+                hist_start = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+                hist_end   = date.today().strftime("%Y-%m-%d")
+                stock_history = await krx_service.get_stock_history(
+                    stock_code, hist_start, hist_end
+                )
+            except Exception:
+                pass
+
         # ── 모듈 분석 실행 ───────────────────────────────────────────
         result = await module_service.run_module(
             module_id=module_id,
@@ -610,6 +664,7 @@ async def run_module_analysis(
             governance_data=governance_data,
             disc_list=disc_list,
             market_data=market_data,
+            stock_history=stock_history,
         )
 
         return result

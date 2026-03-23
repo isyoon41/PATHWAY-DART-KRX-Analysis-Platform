@@ -829,6 +829,7 @@ class ModuleAnalysisService:
         governance_data: Dict[str, Any],
         disc_list: List[Dict],
         market_data: Dict,
+        stock_history: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """단일 모듈 분석 실행 (S1-S11 섹션 기반)"""
 
@@ -943,6 +944,30 @@ class ModuleAnalysisService:
                 f"[S11 — 시장 데이터 (KRX/네이버 금융)]\n"
                 f"{json.dumps(market_data, ensure_ascii=False, indent=2)[:2000]}"
             )
+
+        # 일자별 주가 이력 (S11 확장 — FDR/Yahoo, stock_movement 전용)
+        if (
+            module_id == "stock_movement"
+            and stock_history
+            and "error" not in stock_history
+        ):
+            records = stock_history.get("records", [])
+            if records:
+                # 최근 120 거래일만 표시 (토큰 절약)
+                sample = records[-120:]
+                provider = stock_history.get("_source", {}).get("provider", "FDR")
+                header = (
+                    f"[S11 — 일자별 주가 이력 ({provider}) | "
+                    f"{stock_history.get('start_date','')} ~ {stock_history.get('end_date','')}]\n"
+                    f"총 {len(records)}거래일 중 최근 {len(sample)}거래일 (날짜·종가·거래량):\n"
+                )
+                rows = "\n".join(
+                    f"  {r['date']}  종가:{r['close']:>10,.0f}  "
+                    f"고가:{r['high']:>10,.0f}  저가:{r['low']:>10,.0f}  "
+                    f"거래량:{r['volume']:>12,}"
+                    for r in sample
+                )
+                ctx.append(header + rows)
 
         # ── 4. 프롬프트 조립 & Gemini 호출 ───────────────────────────
         data_context = "\n\n".join(ctx)
