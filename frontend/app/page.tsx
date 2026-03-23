@@ -284,8 +284,8 @@ export default function Home() {
             options.endYear,
           );
           setComprehensive(comp);
-        } catch (e) {
-          console.warn('comprehensive 실패:', e);
+        } catch {
+          // comprehensive 실패 — 개별 섹션 에러는 UI에서 처리
         }
       }
       if (options.includeAI) {
@@ -297,12 +297,13 @@ export default function Home() {
             endQtr:    options.endQtr,
           });
           setAIReport(ai);
-        } catch (e) {
-          console.warn('AI 리포트 실패:', e);
+        } catch {
+          // AI 리포트 실패 — 결과 화면에서 없음으로 표시
         }
       }
-    } catch (e: any) {
-      setError(e.message || '알 수 없는 오류가 발생했습니다.');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.';
+      setError(msg);
     } finally {
       setLoadingDone(true);
       setTimeout(() => setStep('results'), 800);

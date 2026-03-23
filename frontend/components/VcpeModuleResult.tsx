@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, BarChart2, Shield, Zap,
   Target, AlertTriangle, Info,
 } from 'lucide-react';
-import type { VcpeModuleResultData, VcpeSignal, VcpeRiskItem } from '@/lib/api';
+import type { VcpeModuleResultData, VcpeSignal, VcpeRiskItem, VcpeEvidenceItem } from '@/lib/api';
 
 // ──────────────────────────────────────────────────────────────────────
 // 유틸
@@ -139,9 +139,22 @@ function QuestionsPanel({ questions }: { questions: string[] }) {
   );
 }
 
-function EvidenceMap({ map }: { map: Record<string, string> }) {
+function EvidenceMap({ map }: { map: VcpeEvidenceItem[] | Record<string, string> | any }) {
   const [open, setOpen] = useState(false);
-  const entries = Object.entries(map);
+
+  // 배열 형식 (백엔드 v2 skeleton)인지 객체인지 판별
+  const isArray = Array.isArray(map);
+
+  // 배열 아이템 목록
+  const arrayItems: VcpeEvidenceItem[] = isArray ? map : [];
+  // Record 형식: 값이 문자열인 엔트리만 안전하게 추출
+  const recordEntries: [string, string][] = !isArray
+    ? Object.entries(map).filter(([, v]) => typeof v === 'string') as [string, string][]
+    : [];
+
+  const count = isArray ? arrayItems.length : recordEntries.length;
+  if (count === 0) return null;
+
   return (
     <div className="border border-[#E2E8F0] rounded">
       <button
@@ -149,18 +162,37 @@ function EvidenceMap({ map }: { map: Record<string, string> }) {
         className="w-full flex items-center justify-between px-4 py-2.5 bg-[#F8FAFC] hover:bg-[#F1F5F9] transition-colors"
       >
         <span className="text-[12px] font-bold text-[#475569] uppercase tracking-wide">
-          근거 맵 (Evidence Map) · {entries.length}항목
+          근거 맵 (Evidence Map) · {count}항목
         </span>
         {open ? <ChevronUp className="w-4 h-4 text-[#94A3B8]" /> : <ChevronDown className="w-4 h-4 text-[#94A3B8]" />}
       </button>
       {open && (
         <div className="divide-y divide-[#E2E8F0]">
-          {entries.map(([k, v]) => (
-            <div key={k} className="px-4 py-2.5 flex gap-3">
-              <span className="text-[11px] font-bold text-[#0C2340] w-28 flex-shrink-0">{k}</span>
-              <span className="text-[12px] text-[#334155]">{v}</span>
-            </div>
-          ))}
+          {isArray
+            ? arrayItems.map((item, i) => (
+                <div key={i} className="px-4 py-2.5 space-y-0.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[12px] text-[#334155] flex-1">{item.point}</p>
+                    {item.assessment_type && (
+                      <span className="flex-shrink-0 text-[10px] font-bold bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
+                        {item.assessment_type}
+                      </span>
+                    )}
+                  </div>
+                  {item.source_sections && item.source_sections.length > 0 && (
+                    <p className="text-[11px] text-[#94A3B8]">
+                      출처: {item.source_sections.join(' / ')}
+                    </p>
+                  )}
+                </div>
+              ))
+            : recordEntries.map(([k, v]) => (
+                <div key={k} className="px-4 py-2.5 flex gap-3">
+                  <span className="text-[11px] font-bold text-[#0C2340] w-28 flex-shrink-0">{k}</span>
+                  <span className="text-[12px] text-[#334155]">{v}</span>
+                </div>
+              ))
+          }
         </div>
       )}
     </div>
@@ -304,101 +336,131 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
       )}
 
       {/* ── VC / PE 탭 ── */}
-      {(data.vc_view || data.pe_view) && (
-        <div className="border border-[#E2E8F0] rounded overflow-hidden">
-          <div className="flex border-b border-[#E2E8F0]">
-            {(['vc', 'pe'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 py-2 text-[12px] font-bold uppercase tracking-wider transition-colors ${
-                  activeTab === tab
-                    ? 'bg-[#0C2340] text-white'
-                    : 'bg-[#F8FAFC] text-[#64748B] hover:bg-[#F1F5F9]'
-                }`}
-              >
-                {tab === 'vc' ? '⚡ VC 관점' : '🏗️ PE 관점'}
-              </button>
-            ))}
+      {(data.vc_view || data.pe_view) && (() => {
+        // vc_view / pe_view 가 빈 문자열이거나 문자열로 오는 경우 방어
+        const vcObj = typeof data.vc_view === 'object' && data.vc_view !== null ? data.vc_view : null;
+        const vcStr = typeof data.vc_view === 'string' && (data.vc_view as string).trim() ? data.vc_view as string : null;
+        const peObj = typeof data.pe_view === 'object' && data.pe_view !== null ? data.pe_view : null;
+        const peStr = typeof data.pe_view === 'string' && (data.pe_view as string).trim() ? data.pe_view as string : null;
+        const hasVc = !!(vcObj || vcStr);
+        const hasPe = !!(peObj || peStr);
+        if (!hasVc && !hasPe) return null;
+        return (
+          <div className="border border-[#E2E8F0] rounded overflow-hidden">
+            <div className="flex border-b border-[#E2E8F0]">
+              {(['vc', 'pe'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex-1 py-2 text-[12px] font-bold uppercase tracking-wider transition-colors ${
+                    activeTab === tab
+                      ? 'bg-[#0C2340] text-white'
+                      : 'bg-[#F8FAFC] text-[#64748B] hover:bg-[#F1F5F9]'
+                  }`}
+                >
+                  {tab === 'vc' ? '⚡ VC 관점' : '🏗️ PE 관점'}
+                </button>
+              ))}
+            </div>
+            <div className="p-4">
+              {activeTab === 'vc' && (
+                <div className="space-y-3">
+                  {/* 문자열 폴백 */}
+                  {vcStr && !vcObj && (
+                    <p className="text-[13px] text-[#1E293B]">{vcStr}</p>
+                  )}
+                  {/* 구조화 객체 */}
+                  {vcObj && (
+                    <>
+                      {vcObj.summary && (
+                        <p className="text-[13px] text-[#1E293B]">{vcObj.summary}</p>
+                      )}
+                      {vcObj.upside_drivers && vcObj.upside_drivers.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-bold text-[#475569] mb-1.5">업사이드 드라이버</p>
+                          <ul className="space-y-1">
+                            {vcObj.upside_drivers.map((d: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
+                                <Zap className="w-3.5 h-3.5 mt-0.5 text-amber-500 flex-shrink-0" />{d}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {vcObj.key_risks && vcObj.key_risks.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-bold text-[#475569] mb-1.5">핵심 리스크</p>
+                          <ul className="space-y-1">
+                            {vcObj.key_risks.map((r: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
+                                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-red-400 flex-shrink-0" />{r}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {vcObj.entry_strategy && (
+                        <div className="bg-amber-50 border border-amber-200 p-3 rounded">
+                          <p className="text-[11px] font-bold text-amber-700 mb-1">진입 전략</p>
+                          <p className="text-[12px] text-[#334155]">{vcObj.entry_strategy}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {!hasVc && <p className="text-[12px] text-[#94A3B8] italic">VC 관점 분석 없음</p>}
+                </div>
+              )}
+              {activeTab === 'pe' && (
+                <div className="space-y-3">
+                  {/* 문자열 폴백 */}
+                  {peStr && !peObj && (
+                    <p className="text-[13px] text-[#1E293B]">{peStr}</p>
+                  )}
+                  {/* 구조화 객체 */}
+                  {peObj && (
+                    <>
+                      {peObj.summary && (
+                        <p className="text-[13px] text-[#1E293B]">{peObj.summary}</p>
+                      )}
+                      {peObj.value_creation_levers && peObj.value_creation_levers.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-bold text-[#475569] mb-1.5">가치 창출 레버</p>
+                          <ul className="space-y-1">
+                            {peObj.value_creation_levers.map((l: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
+                                <Target className="w-3.5 h-3.5 mt-0.5 text-blue-500 flex-shrink-0" />{l}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {peObj.exit_considerations && peObj.exit_considerations.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-bold text-[#475569] mb-1.5">엑시트 고려사항</p>
+                          <ul className="space-y-1">
+                            {peObj.exit_considerations.map((e: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
+                                <Shield className="w-3.5 h-3.5 mt-0.5 text-purple-500 flex-shrink-0" />{e}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {peObj.ebitda_assessment && (
+                        <div className="bg-blue-50 border border-blue-200 p-3 rounded">
+                          <p className="text-[11px] font-bold text-blue-700 mb-1">EBITDA 평가</p>
+                          <p className="text-[12px] text-[#334155]">{peObj.ebitda_assessment}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {!hasPe && <p className="text-[12px] text-[#94A3B8] italic">PE 관점 분석 없음</p>}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="p-4">
-            {activeTab === 'vc' && data.vc_view && (
-              <div className="space-y-3">
-                {data.vc_view.summary && (
-                  <p className="text-[13px] text-[#1E293B]">{data.vc_view.summary}</p>
-                )}
-                {data.vc_view.upside_drivers && data.vc_view.upside_drivers.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-[#475569] mb-1.5">업사이드 드라이버</p>
-                    <ul className="space-y-1">
-                      {data.vc_view.upside_drivers.map((d, i) => (
-                        <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
-                          <Zap className="w-3.5 h-3.5 mt-0.5 text-amber-500 flex-shrink-0" />{d}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.vc_view.key_risks && data.vc_view.key_risks.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-[#475569] mb-1.5">핵심 리스크</p>
-                    <ul className="space-y-1">
-                      {data.vc_view.key_risks.map((r, i) => (
-                        <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
-                          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-red-400 flex-shrink-0" />{r}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.vc_view.entry_strategy && (
-                  <div className="bg-amber-50 border border-amber-200 p-3 rounded">
-                    <p className="text-[11px] font-bold text-amber-700 mb-1">진입 전략</p>
-                    <p className="text-[12px] text-[#334155]">{data.vc_view.entry_strategy}</p>
-                  </div>
-                )}
-              </div>
-            )}
-            {activeTab === 'pe' && data.pe_view && (
-              <div className="space-y-3">
-                {data.pe_view.summary && (
-                  <p className="text-[13px] text-[#1E293B]">{data.pe_view.summary}</p>
-                )}
-                {data.pe_view.value_creation_levers && data.pe_view.value_creation_levers.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-[#475569] mb-1.5">가치 창출 레버</p>
-                    <ul className="space-y-1">
-                      {data.pe_view.value_creation_levers.map((l, i) => (
-                        <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
-                          <Target className="w-3.5 h-3.5 mt-0.5 text-blue-500 flex-shrink-0" />{l}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.pe_view.exit_considerations && data.pe_view.exit_considerations.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-[#475569] mb-1.5">엑시트 고려사항</p>
-                    <ul className="space-y-1">
-                      {data.pe_view.exit_considerations.map((e, i) => (
-                        <li key={i} className="flex items-start gap-2 text-[12px] text-[#334155]">
-                          <Shield className="w-3.5 h-3.5 mt-0.5 text-purple-500 flex-shrink-0" />{e}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.pe_view.ebitda_assessment && (
-                  <div className="bg-blue-50 border border-blue-200 p-3 rounded">
-                    <p className="text-[11px] font-bold text-blue-700 mb-1">EBITDA 평가</p>
-                    <p className="text-[12px] text-[#334155]">{data.pe_view.ebitda_assessment}</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── 리스크 분류 (Layer 3: 최상위 필드 사용, 구조화 렌더링) ── */}
       {(
@@ -460,34 +522,56 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
       )}
 
       {/* ── 신뢰도 ── */}
-      {data.confidence && (
-        <div className="p-4 border border-[#E2E8F0] rounded">
-          <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#64748B] mb-3">분석 신뢰도</h3>
-          <div className="space-y-2">
-            {([
-              ['overall',        '종합 신뢰도'],
-              ['data_quality',   '데이터 품질'],
-              ['analysis_depth', '분석 깊이'],
-            ] as [keyof typeof data.confidence, string][]).map(([k, lbl]) => {
-              const v = data.confidence![k];
-              if (v === undefined) return null;
-              const pct = Math.min(100, Math.max(0, v * 10));
-              return (
-                <div key={k} className="flex items-center gap-3">
-                  <span className="text-[12px] text-[#475569] w-24 flex-shrink-0">{lbl}</span>
-                  <div className="flex-1 bg-[#E2E8F0] rounded-full h-1.5">
-                    <div
-                      className="h-1.5 rounded-full bg-[#2E75B6] transition-all"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <span className="text-[12px] text-[#64748B] w-6 text-right">{v}</span>
+      {data.confidence != null && (() => {
+        // confidence가 숫자(0.0~1.0 또는 0~10)로 올 수도 있음 — 방어 처리
+        const confRaw = data.confidence;
+        if (typeof confRaw === 'number') {
+          // 단일 숫자: 0~1 범위면 ×100, 1 초과면 ×10 으로 환산
+          const pct = confRaw <= 1 ? confRaw * 100 : Math.min(100, confRaw * 10);
+          const display = confRaw <= 1 ? (confRaw * 10).toFixed(1) : confRaw.toFixed(1);
+          return (
+            <div className="p-4 border border-[#E2E8F0] rounded">
+              <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#64748B] mb-3">분석 신뢰도</h3>
+              <div className="flex items-center gap-3">
+                <span className="text-[12px] text-[#475569] w-24 flex-shrink-0">종합 신뢰도</span>
+                <div className="flex-1 bg-[#E2E8F0] rounded-full h-1.5">
+                  <div className="h-1.5 rounded-full bg-[#2E75B6] transition-all" style={{ width: `${pct}%` }} />
                 </div>
-              );
-            })}
+                <span className="text-[12px] text-[#64748B] w-6 text-right">{display}</span>
+              </div>
+            </div>
+          );
+        }
+        // 객체 형식 (VcpeConfidence)
+        if (typeof confRaw !== 'object' || confRaw === null) return null;
+        const confObj = confRaw as Record<string, number | undefined>;
+        const rows: [string, string][] = [
+          ['overall',        '종합 신뢰도'],
+          ['data_quality',   '데이터 품질'],
+          ['analysis_depth', '분석 깊이'],
+        ];
+        return (
+          <div className="p-4 border border-[#E2E8F0] rounded">
+            <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#64748B] mb-3">분석 신뢰도</h3>
+            <div className="space-y-2">
+              {rows.map(([k, lbl]) => {
+                const v = confObj[k];
+                if (v === undefined || v === null) return null;
+                const pct = Math.min(100, Math.max(0, v * 10));
+                return (
+                  <div key={k} className="flex items-center gap-3">
+                    <span className="text-[12px] text-[#475569] w-24 flex-shrink-0">{lbl}</span>
+                    <div className="flex-1 bg-[#E2E8F0] rounded-full h-1.5">
+                      <div className="h-1.5 rounded-full bg-[#2E75B6] transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-[12px] text-[#64748B] w-6 text-right">{v}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── 검증 질문 (근거 불충분 시그널 포함) ── */}
       {data.questions_to_validate && data.questions_to_validate.length > 0 && (
@@ -495,7 +579,11 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
       )}
 
       {/* ── 근거 맵 ── */}
-      {data.evidence_map && Object.keys(data.evidence_map).length > 0 && (
+      {data.evidence_map != null && (
+        Array.isArray(data.evidence_map)
+          ? (data.evidence_map as any[]).length > 0
+          : Object.keys(data.evidence_map).length > 0
+      ) && (
         <EvidenceMap map={data.evidence_map} />
       )}
     </div>

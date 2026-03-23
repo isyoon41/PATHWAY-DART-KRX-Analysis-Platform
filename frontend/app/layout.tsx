@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -18,7 +19,9 @@ export default function RootLayout({
     <html lang="ko">
       <body className={inter.className}>
         <div className="min-h-screen bg-gray-50">
-          {children}
+          <ErrorBoundary fallbackMessage="앱 전체에서 오류가 발생했습니다. 페이지를 새로고침 해주세요.">
+            {children}
+          </ErrorBoundary>
         </div>
       </body>
     </html>

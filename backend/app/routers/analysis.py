@@ -1,8 +1,11 @@
+import asyncio
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
+
 from fastapi import APIRouter, HTTPException, Query, Path
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
-import asyncio
+
 from app.services.dart_service import dart_service
 from app.services.krx_service import krx_service
 from app.services.dart_parser import create_parser, analyzer as section_analyzer
@@ -11,6 +14,8 @@ from app.services.claude_service import claude_service
 from app.services.module_service import module_service, MODULES, MODULE_ID_ALIAS
 from app.services import job_service, cache_service
 from config import settings
+
+logger = logging.getLogger("pathway.analysis")
 
 
 # ─── 요청 바디 모델 ──────────────────────────────────────────────────
@@ -55,7 +60,6 @@ async def get_comprehensive_analysis(
 
         # 재무제표 (XBRL → 구조화) — 지정 연도 우선, 없으면 전년도 fallback
         if include_financial:
-            import asyncio as _asyncio
             target_year = bsns_year if bsns_year else str(datetime.now().year - 1)
             fallback_year = str(int(target_year) - 1)
 
@@ -323,8 +327,6 @@ async def get_ai_report(
     - **end_year   / end_qtr**  : 분석 종료 연도·분기
     - 기본값: 최근 3개년(end_year=전년도, start_year=end_year-2), Q1~Q4 전체
     """
-    import asyncio
-
     # ── 기간 계산 ────────────────────────────────────────────────────────
     now = datetime.now()
     _end_year   = end_year   if end_year   else now.year - 1
@@ -440,7 +442,7 @@ async def get_ai_report(
             try:
                 market_data = await krx_service.get_stock_price(stock_code)
             except Exception:
-                pass
+                logger.debug("시장 데이터 조회 실패 (stock_code=%s)", stock_code, exc_info=True)
 
         # ── 4.5단계: 사업보고서 원문 섹션 분해 ─────────────────────────────
         # DART에서 사업보고서를 직접 검색(최대 3년 소급)한 뒤 HTML 다운로드 → 섹션 분해
@@ -496,8 +498,8 @@ async def get_ai_report(
                                 "rcept_dt":   rcept_dt_ar,
                             }
         except Exception:
-            # 원문 파싱 실패 시 조용히 무시 — 재무/AI 분석은 계속 진행
-            pass
+            # 원문 파싱 실패 시 경고 후 진행 — 재무/AI 분석은 계속
+            logger.warning("사업보고서 원문 파싱 실패 (corp_code=%s)", corp_code, exc_info=True)
 
         # ── 5단계: Gemini AI 분석 ─────────────────────────────────────────
         corp_name = company_info.get("corp_name", corp_code)
@@ -676,7 +678,7 @@ async def run_module_analysis(
             try:
                 market_data = await krx_service.get_stock_price(stock_code)
             except Exception:
-                pass
+                logger.debug("모듈 분석용 시장 데이터 조회 실패 (stock_code=%s)", stock_code)
 
         # 일자별 주가 이력 — S11 포함 모듈 전체에 제공 (FDR/Yahoo)
         stock_history: Dict = {}
@@ -694,7 +696,7 @@ async def run_module_analysis(
                     stock_code, hist_start, hist_end
                 )
             except Exception:
-                pass
+                logger.debug("주가 이력 조회 실패 (stock_code=%s)", stock_code)
 
         # ── 모듈 분석 실행 ───────────────────────────────────────────
         result = await module_service.run_module(
@@ -785,7 +787,7 @@ async def run_meta_analysis(
             try:
                 market_data = await krx_service.get_stock_price(stock_code)
             except Exception:
-                pass
+                logger.debug("메타 분석용 시장 데이터 조회 실패 (stock_code=%s)", stock_code)
             try:
                 hist_start = (_date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
                 hist_end   = _date.today().strftime("%Y-%m-%d")
@@ -793,7 +795,7 @@ async def run_meta_analysis(
                     stock_code, hist_start, hist_end
                 )
             except Exception:
-                pass
+                logger.debug("메타 분석용 주가 이력 조회 실패 (stock_code=%s)", stock_code)
 
         # ── 2. 9개 모듈 병렬 실행 ──────────────────────────────────
         ALL_MODULE_IDS = [
@@ -960,7 +962,7 @@ async def run_incremental_module_analysis(
             try:
                 market_data = await krx_service.get_stock_price(stock_code)
             except Exception:
-                pass
+                logger.debug("증분 분석용 시장 데이터 조회 실패 (stock_code=%s)", stock_code)
 
         # 증분: 캐시 무효화 후 prev_result 주입
         cache_service.invalidate(corp_code, real_id, str(base_year))
@@ -1041,7 +1043,7 @@ async def _run_meta_analysis_background(
             try:
                 market_data = await krx_service.get_stock_price(stock_code)
             except Exception:
-                pass
+                logger.debug("비동기 메타 분석 시장 데이터 조회 실패 (stock_code=%s)", stock_code)
             try:
                 hist_start = (_date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
                 hist_end   = _date.today().strftime("%Y-%m-%d")
@@ -1049,7 +1051,7 @@ async def _run_meta_analysis_background(
                     stock_code, hist_start, hist_end
                 )
             except Exception:
-                pass
+                logger.debug("비동기 메타 분석 주가 이력 조회 실패 (stock_code=%s)", stock_code)
 
         job_service.update_job(job_id, "running", progress=15)
 

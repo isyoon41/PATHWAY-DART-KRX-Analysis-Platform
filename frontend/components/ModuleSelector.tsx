@@ -9,6 +9,57 @@ import { CompanySearchResult, analysisAPI, ModuleResult, VcpeModuleResultData, J
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import VcpeModuleResult from './VcpeModuleResult';
+import ErrorBoundary from './ErrorBoundary';
+
+// ──────────────────────────────────────────────────────────────────────
+// JSON 공격적 파싱 유틸 — AI 응답의 비표준 JSON 복구
+// ──────────────────────────────────────────────────────────────────────
+function _tryParseJSON(text: string): Record<string, any> | null {
+  if (!text || typeof text !== 'string') return null;
+
+  // 1단계: 마크다운 코드펜스 제거
+  let s = text.replace(/```(?:json)?\s*\n?/g, '').replace(/\n?```\s*$/g, '').trim();
+
+  // 2단계: 직접 파싱
+  try { return JSON.parse(s); } catch { /* continue */ }
+
+  // 3단계: 첫 { ~ 마지막 } 추출
+  const first = s.indexOf('{');
+  const last = s.lastIndexOf('}');
+  if (first === -1 || last <= first) return null;
+  let candidate = s.substring(first, last + 1);
+
+  try { return JSON.parse(candidate); } catch { /* continue */ }
+
+  // 4단계: trailing comma 제거 (AI가 자주 생성하는 비표준)
+  candidate = candidate.replace(/,\s*([}\]])/g, '$1');
+  try { return JSON.parse(candidate); } catch { /* continue */ }
+
+  // 5단계: 제어문자 제거 + 줄바꿈 정리
+  candidate = candidate.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  try { return JSON.parse(candidate); } catch { /* continue */ }
+
+  // 6단계: 잘린 JSON 복구 — 괄호 카운팅으로 닫기
+  let depth = 0;
+  let inStr = false;
+  let escaped = false;
+  for (let i = 0; i < candidate.length; i++) {
+    const c = candidate[i];
+    if (escaped) { escaped = false; continue; }
+    if (c === '\\') { escaped = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{' || c === '[') depth++;
+    if (c === '}' || c === ']') depth--;
+  }
+  if (depth > 0) {
+    // 열린 괄호만큼 닫기 추가
+    candidate += '}'.repeat(depth);
+    try { return JSON.parse(candidate); } catch { /* continue */ }
+  }
+
+  return null;
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // 모듈 목록 — VC/PE 프롬프트 팩 v2 신규 ID 사용
@@ -231,7 +282,29 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
 
   const activeResult = activeModule ? results[activeModule] : null;
   const activeStatus = activeModule ? (statuses[activeModule] || 'idle') : 'idle';
-  const isVcpeResult = Boolean(activeResult?.result?.scorecard || activeResult?.result?.one_line_summary);
+
+  // ── VC/PE 구조화 결과 감지 (raw_response 폴백 파싱 포함) ──
+  const resolvedResult = React.useMemo(() => {
+    const r = activeResult?.result;
+    if (!r) return null;
+    // 이미 구조화된 결과면 그대로
+    if (r.scorecard || r.one_line_summary) return r;
+    // raw_response 가 있으면 공격적 파싱 시도 (백엔드 파싱 실패 복구)
+    const raw = r.raw_response ?? (activeResult?.report);
+    if (raw && typeof raw === 'string') {
+      const parsed = _tryParseJSON(raw);
+      if (parsed && (parsed.scorecard || parsed.one_line_summary)) return parsed;
+    }
+    return r;
+  }, [activeResult]);
+
+  const isVcpeResult = Boolean(resolvedResult?.scorecard || resolvedResult?.one_line_summary);
+  // report에 _parse_error가 포함되어 있으면 마크다운으로 표시하지 않음
+  const hasValidReport = Boolean(
+    activeResult?.report &&
+    !activeResult.report.includes('"_parse_error"') &&
+    !activeResult.report.includes('"raw_response"')
+  );
 
   return (
     <div className="flex gap-6 min-h-[600px]">
@@ -363,13 +436,27 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                 {metaResult.corp_name} — VC/PE 심층 종합 분석
               </h2>
             </div>
-            {metaResult.result ? (
-              <VcpeModuleResult data={metaResult.result} moduleName="메타 종합 분석" />
-            ) : (
-              <pre className="text-[11px] text-[#334155] whitespace-pre-wrap">
-                {JSON.stringify(metaResult, null, 2)}
-              </pre>
-            )}
+            {(() => {
+              // raw_response 폴백 파싱 (공격적 _tryParseJSON 사용)
+              let data = metaResult.result;
+              if (data && !data.scorecard && !data.one_line_summary) {
+                const raw = data.raw_response ?? metaResult.report;
+                if (raw && typeof raw === 'string') {
+                  const parsed = _tryParseJSON(raw);
+                  if (parsed && (parsed.scorecard || parsed.one_line_summary)) data = parsed;
+                }
+              }
+              return data?.scorecard || data?.one_line_summary ? (
+                <ErrorBoundary fallbackMessage="메타 분석 결과 표시 중 오류가 발생했습니다.">
+                  <VcpeModuleResult data={data} moduleName="메타 종합 분석" />
+                </ErrorBoundary>
+              ) : (
+                <div className="p-6 text-center text-[#94A3B8] space-y-3">
+                  <p className="text-[13px] font-semibold">메타 분석 결과 구조화 실패</p>
+                  <p className="text-[12px]">분석은 완료되었으나 결과 형식이 예상과 다릅니다.</p>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -432,14 +519,23 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
             </div>
 
             {/* VC/PE JSON 결과 or 마크다운 폴백 */}
-            {isVcpeResult && activeResult.result ? (
-              <VcpeModuleResult data={activeResult.result} moduleName={activeResult.module_name} />
-            ) : activeResult.report ? (
-              <MdRenderer text={activeResult.report} />
+            {isVcpeResult && resolvedResult ? (
+              <ErrorBoundary fallbackMessage="모듈 분석 결과 표시 중 오류가 발생했습니다.">
+                <VcpeModuleResult data={resolvedResult} moduleName={activeResult.module_name} />
+              </ErrorBoundary>
+            ) : hasValidReport ? (
+              <MdRenderer text={activeResult.report!} />
             ) : (
-              <pre className="text-[11px] text-[#334155] whitespace-pre-wrap">
-                {JSON.stringify(activeResult, null, 2)}
-              </pre>
+              <div className="p-6 text-center text-[#94A3B8] space-y-3">
+                <p className="text-[13px] font-semibold">AI 분석 결과 구조화 실패</p>
+                <p className="text-[12px]">분석은 완료되었으나 결과 형식이 예상과 다릅니다. 업데이트 버튼을 눌러 재분석하세요.</p>
+                <button
+                  onClick={() => rerunModule(activeModule!)}
+                  className="inline-flex items-center gap-1 px-4 py-2 text-[12px] font-bold text-white bg-[#0C2340] hover:bg-[#1a3a5c] rounded transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> 재분석
+                </button>
+              </div>
             )}
 
             {/* 하단 메타 */}

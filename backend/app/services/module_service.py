@@ -435,19 +435,47 @@ def _fill_meta_template(
 
 
 def _parse_json_response(text: str) -> Dict:
-    """LLM 응답에서 JSON 추출 파싱"""
-    text = re.sub(r"```(?:json)?\s*", "", text).strip()
-    text = re.sub(r"```\s*$", "", text).strip()
+    """LLM 응답에서 JSON 추출 파싱 (다단계 폴백)"""
+    import logging
+    _log = logging.getLogger("pathway.module_service")
+
+    if not text or not text.strip():
+        return {"raw_response": "", "_parse_error": "빈 응답"}
+
+    # 1단계: 마크다운 코드 펜스 제거
+    cleaned = re.sub(r"```(?:json)?\s*\n?", "", text).strip()
+    cleaned = re.sub(r"\n?```\s*$", "", cleaned).strip()
+
+    # 2단계: 직접 파싱 시도
     try:
-        return json.loads(text)
+        return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    m = re.search(r"\{[\s\S]*\}", text)
-    if m:
+
+    # 3단계: 첫 번째 '{' ~ 마지막 '}' 추출 (greedy)
+    first_brace = cleaned.find('{')
+    last_brace = cleaned.rfind('}')
+    if first_brace != -1 and last_brace > first_brace:
+        candidate = cleaned[first_brace:last_brace + 1]
         try:
-            return json.loads(m.group())
+            return json.loads(candidate)
         except json.JSONDecodeError:
             pass
+
+        # 4단계: trailing comma 제거 후 재시도
+        fixed = re.sub(r",\s*([}\]])", r"\1", candidate)
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
+        # 5단계: 제어 문자 제거 후 재시도
+        sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', fixed)
+        try:
+            return json.loads(sanitized)
+        except json.JSONDecodeError as e:
+            _log.warning("JSON 파싱 최종 실패: %s (처음 200자: %s)", e, candidate[:200])
+
     return {"raw_response": text, "_parse_error": "JSON 파싱 실패"}
 
 

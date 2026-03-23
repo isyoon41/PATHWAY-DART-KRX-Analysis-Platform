@@ -162,6 +162,14 @@ export interface AIReportData {
 // ─────────────────────────────────────────────
 // VC/PE 모듈 결과 (strict JSON skeleton)
 // ─────────────────────────────────────────────
+
+// evidence_map 배열 아이템 (백엔드 skeleton 기준)
+export interface VcpeEvidenceItem {
+  point: string;
+  source_sections?: string[];
+  assessment_type?: 'fact' | 'inference' | string;
+}
+
 export interface VcpeScorecard {
   성장성?: number;
   수익성?: number;
@@ -227,7 +235,8 @@ export interface VcpeModuleResultData {
   vc_view?: VcpeVcView;
   pe_view?: VcpePeView;
   recommended_action?: string;
-  evidence_map?: Record<string, string>;
+  // evidence_map: 백엔드 skeleton은 배열, 구형은 Record — 둘 다 허용
+  evidence_map?: VcpeEvidenceItem[] | Record<string, string>;
   confidence?: VcpeConfidence;
   risks?: VcpeRisks;
   questions_to_validate?: string[];

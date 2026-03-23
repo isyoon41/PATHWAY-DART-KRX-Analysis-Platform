@@ -58,3 +58,15 @@ htmlcov/
 # Build
 dist/
 build/
+
+# Backend cache (module analysis results)
+backend/cache/
+
+# Backend venv (Windows/Linux)
+backend/Lib/
+backend/Scripts/
+backend/Include/
+backend/pyvenv.cfg
+
+# Claude Code
+.claude/hooks/

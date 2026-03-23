@@ -7,9 +7,12 @@ TTL: 24시간
 """
 import json
 import hashlib
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Optional
+
+logger = logging.getLogger("pathway.cache")
 
 _CACHE_DIR  = Path(__file__).parent.parent.parent / "cache"
 _TTL_HOURS  = 24
@@ -38,7 +41,8 @@ def get_cached(corp_code: str, module_id: str, base_year: str) -> Optional[Any]:
             path.unlink(missing_ok=True)
             return None
         return entry.get("data")
-    except Exception:
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        logger.debug("캐시 읽기 실패 (%s): %s", path.name, e)
         return None
 
 
@@ -52,8 +56,8 @@ def set_cached(corp_code: str, module_id: str, base_year: str, data: Any) -> Non
                 {"cached_at": datetime.now().isoformat(), "data": data},
                 f, ensure_ascii=False,
             )
-    except Exception:
-        pass
+    except (OSError, TypeError) as e:
+        logger.debug("캐시 쓰기/읽기 실패: %s", e)
 
 
 def invalidate(corp_code: str, module_id: str, base_year: str) -> None:
@@ -103,7 +107,7 @@ def get_stats() -> dict:
             cached_at = datetime.fromisoformat(entry.get("cached_at", "2000-01-01"))
             if datetime.now() - cached_at > timedelta(hours=_TTL_HOURS):
                 expired += 1
-        except Exception:
+        except (json.JSONDecodeError, OSError, ValueError):
             expired += 1
     return {
         "total":   total,
