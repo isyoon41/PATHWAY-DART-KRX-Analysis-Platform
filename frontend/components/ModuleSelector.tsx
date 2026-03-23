@@ -161,13 +161,13 @@ function MdRenderer({ text }: { text: string }) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// 메타 분석 진행률 바
+// 심화 분석 진행률 바
 // ──────────────────────────────────────────────────────────────────────
 function MetaProgressBar({ progress, status }: { progress: number; status: string }) {
   return (
     <div className="mb-3">
       <div className="flex justify-between text-[11px] text-[#64748B] mb-1">
-        <span>투자심의 메타 분석 진행 중…</span>
+        <span>투자심의 심화 분석 진행 중…</span>
         <span>{progress}%</span>
       </div>
       <div className="w-full bg-[#E2E8F0] rounded-full h-1.5">
@@ -178,7 +178,7 @@ function MetaProgressBar({ progress, status }: { progress: number; status: strin
       </div>
       <p className="text-[10px] text-[#94A3B8] mt-1">{
         status === 'pending' ? '대기 중…' :
-        status === 'running' ? '9개 모듈 + 투자심의 메타 종합 중 (3~8분 소요)' :
+        status === 'running' ? '9개 모듈 + 투자심의 심화 종합 중 (3~8분 소요)' :
         status === 'completed' ? '완료!' : '실패'
       }</p>
     </div>
@@ -206,7 +206,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
   const [backendError, setBackendError] = useState('');
   const [moduleErrors, setModuleErrors] = useState<Record<string, string>>({});
 
-  // 메타 분석 상태
+  // 심화 분석 상태
   const [metaStatus,   setMetaStatus]   = useState<MetaStatus>('idle');
   const [metaJob,      setMetaJob]      = useState<JobStatus | null>(null);
   const [metaResult,   setMetaResult]   = useState<any>(null);
@@ -261,7 +261,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
     }
   };
 
-  // ── 메타 분석 시작 ───────────────────────────────────────────────
+  // ── 심화 분석 시작 ───────────────────────────────────────────────
   const startMetaAnalysis = async () => {
     setMetaStatus('polling');
     setMetaError('');
@@ -281,7 +281,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
           } else if (job.status === 'failed') {
             clearInterval(pollRef.current!);
             setMetaStatus('error');
-            setMetaError(job.error ?? '투자심의 메타 분석 실패');
+            setMetaError(job.error ?? '투자심의 심화 분석 실패');
           }
         } catch {
           // 폴링 오류 시 계속 시도
@@ -289,7 +289,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
       }, 10_000);
     } catch (e: any) {
       setMetaStatus('error');
-      setMetaError(e.message ?? '투자심의 메타 분석 시작 실패');
+      setMetaError(e.message ?? '투자심의 심화 분석 시작 실패');
     }
   };
 
@@ -330,7 +330,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
           <p className="text-white/50 text-[11px]">분석 기준: {endYear}년</p>
         </div>
 
-        {/* 투자심의용 메타 분석 버튼 */}
+        {/* 투자심의용 심화 분석 버튼 */}
         <div className="mb-3 px-1">
           {metaStatus === 'idle' || metaStatus === 'error' ? (
             (() => {
@@ -343,7 +343,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                     onClick={() => {
                       if (!allDone) {
                         const names = pendingModules.map(m => m.name).join(', ');
-                        setMetaError(`모든 모듈 분석을 완료해야 투자심의용 메타 분석이 가능합니다.\n미완료 모듈 (${pendingModules.length}개): ${names}`);
+                        setMetaError(`모든 모듈 분석을 완료해야 투자심의용 심화 분석이 가능합니다.\n미완료 모듈 (${pendingModules.length}개): ${names}`);
                         return;
                       }
                       startMetaAnalysis();
@@ -355,11 +355,11 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5" />
-                    투자심의용 메타 분석 ({completedModules.length}/{modules.length} 완료)
+                    투자심의용 심화 분석 ({completedModules.length}/{modules.length} 완료)
                   </button>
                   {!allDone && (
                     <p className="text-[10px] text-[#94A3B8] mt-1 px-1">
-                      ※ 좌측 9개 모듈을 모두 실행해야 메타 분석이 가능합니다
+                      ※ 좌측 9개 모듈을 모두 실행해야 심화 분석이 가능합니다
                     </p>
                   )}
                 </>
@@ -375,7 +375,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
               className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-colors"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              투자심의 메타 분석 결과 보기
+              투자심의 심화 분석 결과 보기
             </button>
           )}
           {metaError && (
@@ -462,7 +462,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
           </div>
         )}
 
-        {/* 메타 분석 결과 뷰 */}
+        {/* 심화 분석 결과 뷰 */}
         {activeModule === '__meta__' && metaResult && (
           <div className="p-6 overflow-auto">
             <div className="border-b-2 border-[#0C2340] pb-4 mb-6">
@@ -471,7 +471,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                 <span className="text-[11px] text-[#94A3B8]">{metaResult.base_year}년 기준</span>
               </div>
               <h2 className="text-[18px] font-bold text-[#0C2340]">
-                {metaResult.corp_name} — 투자심의용 메타 분석
+                {metaResult.corp_name} — 투자심의용 심화 분석
               </h2>
             </div>
             {(() => {
@@ -485,12 +485,12 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                 }
               }
               return data?.scorecard || data?.one_line_summary ? (
-                <ErrorBoundary fallbackMessage="투자심의 메타 분석 결과 표시 중 오류가 발생했습니다.">
-                  <VcpeModuleResult data={data} moduleName="투자심의용 메타 분석" />
+                <ErrorBoundary fallbackMessage="투자심의 심화 분석 결과 표시 중 오류가 발생했습니다.">
+                  <VcpeModuleResult data={data} moduleName="투자심의용 심화 분석" />
                 </ErrorBoundary>
               ) : (
                 <div className="p-6 text-center text-[#94A3B8] space-y-3">
-                  <p className="text-[13px] font-semibold">투자심의 메타 분석 결과 구조화 실패</p>
+                  <p className="text-[13px] font-semibold">투자심의 심화 분석 결과 구조화 실패</p>
                   <p className="text-[12px]">분석은 완료되었으나 결과 형식이 예상과 다릅니다.</p>
                 </div>
               );
