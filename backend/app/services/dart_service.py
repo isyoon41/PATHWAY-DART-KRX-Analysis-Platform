@@ -233,32 +233,37 @@ class DARTService:
             )
             response.raise_for_status()
 
-        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            xml_filename = next(
-                (name for name in zf.namelist() if name.endswith(".xml")), None
-            )
-            if not xml_filename:
-                return []
-            xml_content = zf.read(xml_filename)
+        # ZIP 압축 해제 및 XML 파싱을 스레드에서 실행 (이벤트 루프 블로킹 방지)
+        import asyncio
+        import xml.etree.ElementTree as ET
 
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(xml_content, "xml")
+        def _parse_zip_xml(content: bytes) -> List[Dict]:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                xml_filename = next(
+                    (name for name in zf.namelist() if name.endswith(".xml")), None
+                )
+                if not xml_filename:
+                    return []
+                xml_content = zf.read(xml_filename)
 
-        corps = []
-        for corp in soup.find_all("list"):
-            corp_name_tag = corp.find("corp_name")
-            corp_code_tag = corp.find("corp_code")
-            if not corp_name_tag or not corp_code_tag:
-                continue
-            stock_code_tag = corp.find("stock_code")
-            stock_code = stock_code_tag.text.strip() if stock_code_tag else ""
-            modify_tag = corp.find("modify_date")
-            corps.append({
-                "corp_code": corp_code_tag.text,
-                "corp_name": corp_name_tag.text,
-                "stock_code": stock_code if stock_code else None,
-                "modify_date": modify_tag.text if modify_tag else None,
-            })
+            root = ET.fromstring(xml_content)
+            result = []
+            for corp in root.findall("list"):
+                corp_code = corp.findtext("corp_code", "").strip()
+                corp_name = corp.findtext("corp_name", "").strip()
+                if not corp_code or not corp_name:
+                    continue
+                stock_code = (corp.findtext("stock_code") or "").strip()
+                modify_date = corp.findtext("modify_date")
+                result.append({
+                    "corp_code": corp_code,
+                    "corp_name": corp_name,
+                    "stock_code": stock_code if stock_code else None,
+                    "modify_date": modify_date,
+                })
+            return result
+
+        corps = await asyncio.to_thread(_parse_zip_xml, response.content)
 
         self._corp_list_cache = corps
         self._corp_list_cache_time = now
