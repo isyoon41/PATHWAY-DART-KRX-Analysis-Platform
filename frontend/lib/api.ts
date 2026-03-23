@@ -237,7 +237,7 @@ export interface VcpeModuleResultData {
   recommended_action?: string;
   // evidence_map: 백엔드 skeleton은 배열, 구형은 Record — 둘 다 허용
   evidence_map?: VcpeEvidenceItem[] | Record<string, string>;
-  confidence?: VcpeConfidence;
+  confidence?: VcpeConfidence | number;  // 백엔드 skeleton이 숫자(0.0)로 반환할 수 있음
   risks?: VcpeRisks;
   questions_to_validate?: string[];
   structural_insights?: string[];
