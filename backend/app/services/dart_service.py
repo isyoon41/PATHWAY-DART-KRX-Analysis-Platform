@@ -233,6 +233,17 @@ class DARTService:
             )
             response.raise_for_status()
 
+        # ZIP 파일 여부 사전 검증 (ZIP magic bytes: PK\x03\x04)
+        content = response.content
+        if not content[:2] == b'PK':
+            try:
+                err_data = response.json()
+                raise ValueError(f"DART API 오류 응답: status={err_data.get('status')}, message={err_data.get('message')}")
+            except (ValueError, Exception) as e:
+                if "DART API 오류 응답" in str(e):
+                    raise
+                raise ValueError(f"DART corpCode.xml이 ZIP이 아닙니다. 응답 앞부분: {content[:200]}")
+
         # ZIP 압축 해제 및 XML 파싱을 스레드에서 실행 (이벤트 루프 블로킹 방지)
         import asyncio
         import xml.etree.ElementTree as ET
@@ -263,7 +274,7 @@ class DARTService:
                 })
             return result
 
-        corps = await asyncio.to_thread(_parse_zip_xml, response.content)
+        corps = await asyncio.to_thread(_parse_zip_xml, content)
 
         self._corp_list_cache = corps
         self._corp_list_cache_time = now
