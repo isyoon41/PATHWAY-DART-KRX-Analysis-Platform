@@ -353,11 +353,16 @@ class ClaudeAnalysisService:
     """Google Gemini API를 활용한 기업분석 서비스"""
 
     def __init__(self):
-        self.client = genai.Client(api_key=settings.google_api_key)
+        if settings.google_api_key:
+            self.client = genai.Client(api_key=settings.google_api_key)
+        else:
+            self.client = None
         self.model_name = settings.gemini_model
 
     def _call(self, prompt: str, max_tokens: int = 8192) -> str:
         """Gemini API 호출"""
+        if self.client is None:
+            raise ValueError("GOOGLE_API_KEY가 설정되지 않았습니다. AI 분석을 사용하려면 환경변수를 설정해주세요.")
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=prompt,
