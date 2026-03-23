@@ -172,7 +172,13 @@ export interface VcpeScorecard {
 }
 
 export interface VcpeSignal {
-  signal: string;
+  // v2 강화 스키마 (4-field evidence-binding)
+  claim?: string;
+  data_point?: string;
+  source_section?: string;
+  investment_implication?: string;
+  // 구 스키마 하위호환
+  signal?: string;
   evidence?: string;
   importance?: 'high' | 'medium' | 'low' | string;
 }
@@ -215,6 +221,11 @@ export interface VcpeModuleResultData {
   evidence_map?: Record<string, string>;
   confidence?: VcpeConfidence;
   risks?: VcpeRisks;
+  questions_to_validate?: string[];
+  structural_insights?: string[];
+  temporary_issues?: string[];
+  structural_risks?: string[];
+  fatal_risks?: string[];
   [key: string]: any;
 }
 
