@@ -204,6 +204,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
   const [results,      setResults]      = useState<Record<string, ModuleResult>>({});
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [backendError, setBackendError] = useState('');
+  const [moduleErrors, setModuleErrors] = useState<Record<string, string>>({});
 
   // 메타 분석 상태
   const [metaStatus,   setMetaStatus]   = useState<MetaStatus>('idle');
@@ -226,9 +227,21 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
       setStatuses(s => ({ ...s, [moduleId]: 'done' }));
     } catch (e: any) {
       setStatuses(s => ({ ...s, [moduleId]: 'error' }));
-      if (e.message?.includes('fetch') || e.message?.includes('network') || e.code === 'ERR_NETWORK') {
-        setBackendError('백엔드 서버(localhost:8000)에 연결할 수 없습니다. 백엔드를 시작해주세요.');
+      // 에러 메시지 추출
+      const detail = e?.response?.data?.detail || e?.message || '알 수 없는 오류';
+      // 사용자 친화적 메시지 변환
+      let userMsg = detail;
+      if (typeof detail === 'string') {
+        if (detail.includes('429') || detail.includes('RESOURCE_EXHAUSTED') || detail.includes('quota')) {
+          userMsg = 'AI 분석 API 일일 사용량을 초과했습니다. 잠시 후 다시 시도해주세요.';
+        } else if (detail.includes('fetch') || detail.includes('network') || e?.code === 'ERR_NETWORK') {
+          userMsg = '백엔드 서버에 연결할 수 없습니다. 서버 상태를 확인해주세요.';
+          setBackendError(userMsg);
+        } else if (detail.includes('timeout') || detail.includes('ECONNABORTED')) {
+          userMsg = '분석 요청 시간이 초과되었습니다. 다시 시도해주세요.';
+        }
       }
+      setModuleErrors(prev => ({ ...prev, [moduleId]: userMsg }));
     }
   };
 
@@ -478,6 +491,11 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
           <div className="flex flex-col items-center justify-center h-full py-20">
             <AlertCircle className="w-8 h-8 text-red-400 mb-4" />
             <p className="text-red-600 font-semibold mb-2">분석 실패</p>
+            {moduleErrors[activeModule] && (
+              <p className="text-[12px] text-[#64748B] mb-3 max-w-md text-center px-4">
+                {moduleErrors[activeModule]}
+              </p>
+            )}
             <button
               onClick={() => runModule(activeModule)}
               className="text-[13px] bg-[#0C2340] text-white px-4 py-2 hover:bg-[#1F3864]"
