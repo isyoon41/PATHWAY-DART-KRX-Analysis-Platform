@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, BarChart2, Shield, Zap,
   Target, AlertTriangle, Info,
 } from 'lucide-react';
-import type { VcpeModuleResultData, VcpeSignal } from '@/lib/api';
+import type { VcpeModuleResultData, VcpeSignal, VcpeRiskItem } from '@/lib/api';
 
 // ──────────────────────────────────────────────────────────────────────
 // 유틸
@@ -44,6 +44,9 @@ function signalSection(s: VcpeSignal): string | undefined {
 function signalImplication(s: VcpeSignal): string | undefined {
   return s.investment_implication;
 }
+function signalDelta(s: VcpeSignal): string | undefined {
+  return s.delta_or_threshold;
+}
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
   const pct = Math.min(100, Math.max(0, (value / 10) * 100));
@@ -66,9 +69,10 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
 }
 
 function SignalCard({ signal, positive }: { signal: VcpeSignal; positive: boolean }) {
-  const claim      = signalClaim(signal);
-  const evidence   = signalEvidence(signal);
-  const section    = signalSection(signal);
+  const claim       = signalClaim(signal);
+  const evidence    = signalEvidence(signal);
+  const section     = signalSection(signal);
+  const delta       = signalDelta(signal);
   const implication = signalImplication(signal);
 
   return (
@@ -82,10 +86,18 @@ function SignalCard({ signal, positive }: { signal: VcpeSignal; positive: boolea
           </span>
         )}
       </div>
-      {/* 근거 수치 — 핵심 */}
+      {/* 근거 수치 */}
       {evidence && (
         <p className="text-[12px] text-[#0C2340] font-mono mt-1.5 bg-white/70 px-2 py-1 rounded border border-slate-200">
           📊 {evidence}
+        </p>
+      )}
+      {/* Layer 1: 비교 기준값 (delta_or_threshold) */}
+      {delta && (
+        <p className={`text-[11px] font-semibold mt-1 px-2 py-0.5 rounded inline-block ${
+          positive ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+        }`}>
+          △ {delta}
         </p>
       )}
       {/* 투자 시사점 */}
@@ -388,28 +400,59 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
         </div>
       )}
 
-      {/* ── 리스크 분류 ── */}
-      {data.risks && (
-        <div className="grid grid-cols-3 gap-3">
-          {(['temporary', 'structural', 'fatal'] as const).map(tier => {
-            const items = data.risks![tier];
+      {/* ── 리스크 분류 (Layer 3: 최상위 필드 사용, 구조화 렌더링) ── */}
+      {(
+        (data.temporary_issues?.length ?? 0) > 0 ||
+        (data.structural_risks?.length  ?? 0) > 0 ||
+        (data.fatal_risks?.length       ?? 0) > 0
+      ) && (
+        <div className="space-y-3">
+          {([
+            { key: 'temporary_issues' as const,  label: '일시적 리스크',  cls: 'border-amber-200 bg-amber-50',   dot: 'bg-amber-400',  badge: 'bg-amber-100 text-amber-700' },
+            { key: 'structural_risks' as const,  label: '구조적 리스크',  cls: 'border-orange-200 bg-orange-50', dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-700' },
+            { key: 'fatal_risks'      as const,  label: '치명적 리스크',  cls: 'border-red-200 bg-red-50',       dot: 'bg-red-500',    badge: 'bg-red-100 text-red-700' },
+          ]).map(({ key, label, cls, dot, badge }) => {
+            const items = data[key] as (VcpeRiskItem | string)[] | undefined;
             if (!items || items.length === 0) return null;
-            const cfg = {
-              temporary:  { label: '일시적 리스크',  cls: 'border-amber-200 bg-amber-50',   dot: 'bg-amber-400' },
-              structural: { label: '구조적 리스크',  cls: 'border-orange-200 bg-orange-50', dot: 'bg-orange-500' },
-              fatal:      { label: '치명적 리스크',  cls: 'border-red-200 bg-red-50',       dot: 'bg-red-600' },
-            }[tier];
             return (
-              <div key={tier} className={`p-3 rounded border ${cfg.cls}`}>
-                <p className="text-[11px] font-bold text-[#475569] mb-1.5">{cfg.label}</p>
-                <ul className="space-y-1">
-                  {items.map((r, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-[11px] text-[#334155]">
-                      <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                      {r}
-                    </li>
-                  ))}
-                </ul>
+              <div key={key} className={`rounded border ${cls}`}>
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-current/10">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${badge}`}>{label}</span>
+                  <span className="text-[10px] text-[#94A3B8]">{items.length}건</span>
+                </div>
+                <div className="divide-y divide-current/5">
+                  {items.map((r, i) => {
+                    // 구조화 객체 vs 구형 문자열 모두 지원
+                    if (typeof r === 'string') {
+                      return (
+                        <div key={i} className="px-3 py-2 flex items-start gap-2">
+                          <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+                          <p className="text-[12px] text-[#334155]">{r}</p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={i} className="px-3 py-2.5 space-y-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[12px] font-semibold text-[#1E293B] flex-1">{r.description}</p>
+                          {r.source_section && (
+                            <span className="flex-shrink-0 text-[10px] font-bold bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
+                              {r.source_section}
+                            </span>
+                          )}
+                        </div>
+                        {r.evidence && (
+                          <p className="text-[11px] font-mono text-[#0C2340] bg-white/70 px-2 py-0.5 rounded border border-slate-200">
+                            📊 {r.evidence}
+                          </p>
+                        )}
+                        {r.context && (
+                          <p className="text-[11px] text-[#64748B] italic">↳ {r.context}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}

@@ -172,15 +172,24 @@ export interface VcpeScorecard {
 }
 
 export interface VcpeSignal {
-  // v2 강화 스키마 (4-field evidence-binding)
+  // v2 강화 스키마 (5-field)
   claim?: string;
   data_point?: string;
   source_section?: string;
+  delta_or_threshold?: string;        // Layer 1: 업종 평균·전기 대비 차이값
   investment_implication?: string;
   // 구 스키마 하위호환
   signal?: string;
   evidence?: string;
   importance?: 'high' | 'medium' | 'low' | string;
+}
+
+// Layer 3: 구조화된 리스크 항목
+export interface VcpeRiskItem {
+  description: string;
+  evidence?: string;
+  source_section?: string;
+  context?: string;   // structural: 반복 기간 / fatal: Exit 영향
 }
 
 export interface VcpeVcView {
@@ -223,9 +232,10 @@ export interface VcpeModuleResultData {
   risks?: VcpeRisks;
   questions_to_validate?: string[];
   structural_insights?: string[];
-  temporary_issues?: string[];
-  structural_risks?: string[];
-  fatal_risks?: string[];
+  // Layer 3: 구조화된 리스크 (최상위 필드, data.risks 구형 아님)
+  temporary_issues?: (VcpeRiskItem | string)[];
+  structural_risks?:  (VcpeRiskItem | string)[];
+  fatal_risks?:       (VcpeRiskItem | string)[];
   [key: string]: any;
 }
 
