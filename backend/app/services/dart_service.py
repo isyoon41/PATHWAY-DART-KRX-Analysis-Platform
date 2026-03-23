@@ -291,6 +291,7 @@ class DARTService:
                     **corp,
                     "_source": {
                         "provider": "DART 기업 목록",
+                        "url": "https://dart.fss.or.kr",
                         "retrieved_at": datetime.now().isoformat()
                     }
                 })
