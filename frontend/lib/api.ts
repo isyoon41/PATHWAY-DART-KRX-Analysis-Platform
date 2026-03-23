@@ -1,9 +1,10 @@
 import axios from 'axios';
 
-// 백엔드 URL: 환경변수 NEXT_PUBLIC_BACKEND_URL 우선, 없으면 localhost:8000
-// Vercel 배포 시: NEXT_PUBLIC_BACKEND_URL 을 백엔드 서버 주소로 설정
+// 백엔드 URL: 환경변수 NEXT_PUBLIC_BACKEND_URL 우선
+// Vercel 배포 시: NEXT_PUBLIC_BACKEND_URL="" 로 설정하면 Vercel rewrites 프록시 사용
+// 로컬 개발 시: NEXT_PUBLIC_BACKEND_URL=http://localhost:8000 설정
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: BACKEND_URL,
