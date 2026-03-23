@@ -214,7 +214,7 @@ function PeriodPanel({
           <span className="text-[10px] font-normal opacity-75">10개 섹션 · 선택 실행 ★추천</span>
         </button>
 
-        {/* 종합 분석 */}
+        {/* 기업 개요 확인 */}
         <button
           onClick={onStart}
           disabled={!isValid}
@@ -225,7 +225,7 @@ function PeriodPanel({
           }`}
         >
           <Brain className="w-5 h-5" />
-          <span>종합 분석</span>
+          <span>기업 개요 확인</span>
           <span className="text-[10px] font-normal opacity-75">전체 통합 · 1회 실행</span>
         </button>
       </div>

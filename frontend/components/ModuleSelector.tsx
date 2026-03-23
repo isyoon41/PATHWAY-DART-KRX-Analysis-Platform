@@ -74,7 +74,7 @@ export interface AnalysisModule {
 }
 
 const STATIC_MODULES: AnalysisModule[] = [
-  { id: 'comprehensive_corporate_analysis',  name: '종합 기업분석',     badge: 'CORE',       is_core: true,  desc: '사업·재무·지배구조·감사의견 전체 통합 (DART 원문 기반)' },
+  { id: 'comprehensive_corporate_analysis',  name: '사업보고서 종합 분석', badge: 'CORE',       is_core: true,  desc: '사업·재무·지배구조·감사의견 전체 통합 (DART 원문 기반)' },
   { id: 'key_financial_indicators',          name: '핵심 재무지표',     badge: 'FINANCIALS', is_core: true,  desc: '수익성·안정성·성장성 핵심 지표 집중 분석 (XBRL 기반)' },
   { id: 'complete_financial_statements',     name: '전체 재무제표',     badge: 'BALANCE',    is_core: false, desc: '재무상태표·손익계산서·현금흐름표 3개년 요약 1표' },
   { id: 'business_segment_performance',      name: '사업부문별 실적',   badge: 'BUSINESS',   is_core: false, desc: '사업부문별 매출·영업이익·경쟁력 분석 (사업보고서 원문)' },
@@ -167,7 +167,7 @@ function MetaProgressBar({ progress, status }: { progress: number; status: strin
   return (
     <div className="mb-3">
       <div className="flex justify-between text-[11px] text-[#64748B] mb-1">
-        <span>메타 분석 진행 중…</span>
+        <span>투자심의 메타 분석 진행 중…</span>
         <span>{progress}%</span>
       </div>
       <div className="w-full bg-[#E2E8F0] rounded-full h-1.5">
@@ -178,7 +178,7 @@ function MetaProgressBar({ progress, status }: { progress: number; status: strin
       </div>
       <p className="text-[10px] text-[#94A3B8] mt-1">{
         status === 'pending' ? '대기 중…' :
-        status === 'running' ? '9개 모듈 분석 + 메타 종합 중 (3~8분 소요)' :
+        status === 'running' ? '9개 모듈 + 투자심의 메타 종합 중 (3~8분 소요)' :
         status === 'completed' ? '완료!' : '실패'
       }</p>
     </div>
@@ -281,7 +281,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
           } else if (job.status === 'failed') {
             clearInterval(pollRef.current!);
             setMetaStatus('error');
-            setMetaError(job.error ?? '메타 분석 실패');
+            setMetaError(job.error ?? '투자심의 메타 분석 실패');
           }
         } catch {
           // 폴링 오류 시 계속 시도
@@ -289,7 +289,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
       }, 10_000);
     } catch (e: any) {
       setMetaStatus('error');
-      setMetaError(e.message ?? '메타 분석 시작 실패');
+      setMetaError(e.message ?? '투자심의 메타 분석 시작 실패');
     }
   };
 
@@ -330,16 +330,41 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
           <p className="text-white/50 text-[11px]">분석 기준: {endYear}년</p>
         </div>
 
-        {/* 메타 분석 버튼 */}
+        {/* 투자심의용 메타 분석 버튼 */}
         <div className="mb-3 px-1">
           {metaStatus === 'idle' || metaStatus === 'error' ? (
-            <button
-              onClick={startMetaAnalysis}
-              className="w-full flex items-center justify-center gap-2 py-2 bg-gradient-to-r from-[#0C2340] to-[#1F3864] text-white text-[12px] font-bold hover:from-[#1F3864] hover:to-[#2E75B6] transition-all"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              VC/PE 메타 분석 (9모듈 종합)
-            </button>
+            (() => {
+              const completedModules = modules.filter(m => statuses[m.id] === 'done');
+              const pendingModules = modules.filter(m => statuses[m.id] !== 'done');
+              const allDone = pendingModules.length === 0;
+              return (
+                <>
+                  <button
+                    onClick={() => {
+                      if (!allDone) {
+                        const names = pendingModules.map(m => m.name).join(', ');
+                        setMetaError(`모든 모듈 분석을 완료해야 투자심의용 메타 분석이 가능합니다.\n미완료 모듈 (${pendingModules.length}개): ${names}`);
+                        return;
+                      }
+                      startMetaAnalysis();
+                    }}
+                    className={`w-full flex items-center justify-center gap-2 py-2 text-white text-[12px] font-bold transition-all ${
+                      allDone
+                        ? 'bg-gradient-to-r from-[#0C2340] to-[#1F3864] hover:from-[#1F3864] hover:to-[#2E75B6]'
+                        : 'bg-gradient-to-r from-[#64748B] to-[#94A3B8] cursor-not-allowed'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    투자심의용 메타 분석 ({completedModules.length}/{modules.length} 완료)
+                  </button>
+                  {!allDone && (
+                    <p className="text-[10px] text-[#94A3B8] mt-1 px-1">
+                      ※ 좌측 9개 모듈을 모두 실행해야 메타 분석이 가능합니다
+                    </p>
+                  )}
+                </>
+              );
+            })()
           ) : metaStatus === 'polling' ? (
             <div className="border border-[#E2E8F0] p-2 bg-[#F8FAFC]">
               <MetaProgressBar progress={metaJob?.progress ?? 0} status={metaJob?.status ?? 'pending'} />
@@ -350,11 +375,11 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
               className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-colors"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              메타 분석 결과 보기
+              투자심의 메타 분석 결과 보기
             </button>
           )}
           {metaError && (
-            <p className="text-[10px] text-red-500 mt-1 px-1">{metaError}</p>
+            <p className="text-[10px] text-red-500 mt-1 px-1 whitespace-pre-line">{metaError}</p>
           )}
         </div>
 
@@ -446,7 +471,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                 <span className="text-[11px] text-[#94A3B8]">{metaResult.base_year}년 기준</span>
               </div>
               <h2 className="text-[18px] font-bold text-[#0C2340]">
-                {metaResult.corp_name} — VC/PE 심층 종합 분석
+                {metaResult.corp_name} — 투자심의용 메타 분석
               </h2>
             </div>
             {(() => {
@@ -460,12 +485,12 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
                 }
               }
               return data?.scorecard || data?.one_line_summary ? (
-                <ErrorBoundary fallbackMessage="메타 분석 결과 표시 중 오류가 발생했습니다.">
-                  <VcpeModuleResult data={data} moduleName="메타 종합 분석" />
+                <ErrorBoundary fallbackMessage="투자심의 메타 분석 결과 표시 중 오류가 발생했습니다.">
+                  <VcpeModuleResult data={data} moduleName="투자심의용 메타 분석" />
                 </ErrorBoundary>
               ) : (
                 <div className="p-6 text-center text-[#94A3B8] space-y-3">
-                  <p className="text-[13px] font-semibold">메타 분석 결과 구조화 실패</p>
+                  <p className="text-[13px] font-semibold">투자심의 메타 분석 결과 구조화 실패</p>
                   <p className="text-[12px]">분석은 완료되었으나 결과 형식이 예상과 다릅니다.</p>
                 </div>
               );
