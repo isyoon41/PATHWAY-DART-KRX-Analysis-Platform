@@ -797,10 +797,15 @@ def _fmt_disc_list(disc_list: List[Dict], limit: int = 40) -> str:
 
 class ModuleAnalysisService:
     def __init__(self):
-        self.client = genai.Client(api_key=settings.google_api_key)
+        if settings.google_api_key:
+            self.client = genai.Client(api_key=settings.google_api_key)
+        else:
+            self.client = None
         self.model  = settings.gemini_model
 
     def _call_gemini(self, prompt: str, max_tokens: int) -> str:
+        if self.client is None:
+            raise ValueError("GOOGLE_API_KEY가 설정되지 않았습니다. AI 분석을 사용하려면 환경변수를 설정해주세요.")
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
