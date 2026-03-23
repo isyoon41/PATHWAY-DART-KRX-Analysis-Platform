@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Path
-from typing import Dict, Any, List
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import asyncio
 from app.services.dart_service import dart_service
@@ -8,7 +9,14 @@ from app.services.dart_parser import create_parser, analyzer as section_analyzer
 from app.services.financial_parser import structure_financial_data
 from app.services.claude_service import claude_service
 from app.services.module_service import module_service, MODULES, MODULE_ID_ALIAS
+from app.services import job_service, cache_service
 from config import settings
+
+
+# ─── 요청 바디 모델 ──────────────────────────────────────────────────
+class IncrementalModuleRequest(BaseModel):
+    end_year:    str = ""
+    prev_result: Optional[Dict[str, Any]] = None
 
 router = APIRouter()
 
@@ -618,6 +626,14 @@ async def run_module_analysis(
         disc_start = (date.today() - timedelta(days=365 * 4)).strftime("%Y%m%d")
         disc_end   = date.today().strftime("%Y%m%d")
 
+        # 분기 재무 태스크 (개선 7: base_year Q1/H1/Q3)
+        QTR_CODES = {"Q1": "11013", "H1": "11012", "Q3": "11014"}
+        qtr_tasks  = [
+            dart_service.get_financial_statement(corp_code, years[0], code)
+            for code in QTR_CODES.values()
+        ]
+        qtr_labels = [f"{years[0]}_{lbl}" for lbl in QTR_CODES.keys()]
+
         results = await asyncio.gather(
             dart_service.get_company_info(corp_code),
             dart_service.get_financial_statement(corp_code, years[0], "11011"),
@@ -626,6 +642,7 @@ async def run_module_analysis(
             dart_service.get_major_shareholders(corp_code, str(base_year)),
             dart_service.get_executives(corp_code, str(base_year)),
             dart_service.get_disclosure_list(corp_code, bgn_de=disc_start, end_de=disc_end, page_count=50),
+            *qtr_tasks,
             return_exceptions=True,
         )
 
@@ -645,6 +662,12 @@ async def run_module_analysis(
         }
         disc_raw  = results[6]
         disc_list = disc_raw.get("list", []) if not isinstance(disc_raw, Exception) else []
+
+        # 분기 재무 구조화 (개선 7)
+        financials_quarterly: Dict = {}
+        for lbl, raw in zip(qtr_labels, results[7:]):
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_quarterly[lbl] = structure_financial_data(raw)
 
         # 주가 데이터
         market_data: Dict = {}
@@ -681,7 +704,7 @@ async def run_module_analysis(
             end_year=str(base_year),
             years=years,
             financials_by_year=financials_by_year,
-            financials_quarterly={},
+            financials_quarterly=financials_quarterly,
             governance_data=governance_data,
             disc_list=disc_list,
             market_data=market_data,
@@ -852,6 +875,327 @@ async def run_meta_analysis(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"메타 분석 오류: {str(e)}")
+
+
+# ─── 개선 9: 증분 분석 (PATCH) ───────────────────────────────────────
+
+@router.patch("/{corp_code}/module/{module_id}")
+async def run_incremental_module_analysis(
+    corp_code: str = Path(..., description="기업 고유번호"),
+    module_id: str = Path(..., description="분석 모듈 ID"),
+    body: IncrementalModuleRequest = None,
+):
+    """
+    증분 모듈 분석 (이전 결과 기반 업데이트)
+
+    이전 분석 결과(`prev_result`)를 컨텍스트로 제공하면
+    변경된 부분만 재분석하여 효율적으로 업데이트합니다.
+
+    - **prev_result**: 이전 `run_module` 반환값의 `result` 필드
+    - 변경 없으면 이전 결과 그대로 반환, 변경 시 업데이트된 필드만 교체
+    """
+    if body is None:
+        body = IncrementalModuleRequest()
+
+    real_id = MODULE_ID_ALIAS.get(module_id, module_id)
+    if real_id not in MODULES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"알 수 없는 모듈: {module_id}. 가능한 모듈: {list(MODULES.keys())}",
+        )
+
+    end_year   = body.end_year
+    base_year  = int(end_year) if end_year.isdigit() else datetime.now().year - 1
+    years      = [str(base_year), str(base_year - 1), str(base_year - 2)]
+
+    try:
+        from datetime import date
+        disc_start = (date.today() - timedelta(days=365 * 4)).strftime("%Y%m%d")
+        disc_end   = date.today().strftime("%Y%m%d")
+
+        QTR_CODES = {"Q1": "11013", "H1": "11012", "Q3": "11014"}
+        qtr_tasks  = [
+            dart_service.get_financial_statement(corp_code, years[0], code)
+            for code in QTR_CODES.values()
+        ]
+        qtr_labels = [f"{years[0]}_{lbl}" for lbl in QTR_CODES.keys()]
+
+        results = await asyncio.gather(
+            dart_service.get_company_info(corp_code),
+            dart_service.get_financial_statement(corp_code, years[0], "11011"),
+            dart_service.get_financial_statement(corp_code, years[1], "11011"),
+            dart_service.get_financial_statement(corp_code, years[2], "11011"),
+            dart_service.get_major_shareholders(corp_code, str(base_year)),
+            dart_service.get_executives(corp_code, str(base_year)),
+            dart_service.get_disclosure_list(corp_code, bgn_de=disc_start, end_de=disc_end, page_count=50),
+            *qtr_tasks,
+            return_exceptions=True,
+        )
+
+        company_info = results[0] if not isinstance(results[0], Exception) else {}
+        financials_by_year: Dict = {}
+        for i, year in enumerate(years):
+            raw = results[1 + i]
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_by_year[year] = structure_financial_data(raw)
+
+        def _safe(r):
+            return r if not isinstance(r, Exception) and r.get("status") not in ("013", "020") else None
+
+        governance_data = {
+            "major_shareholders": _safe(results[4]),
+            "executives":         _safe(results[5]),
+        }
+        disc_raw  = results[6]
+        disc_list = disc_raw.get("list", []) if not isinstance(disc_raw, Exception) else []
+
+        financials_quarterly: Dict = {}
+        for lbl, raw in zip(qtr_labels, results[7:]):
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_quarterly[lbl] = structure_financial_data(raw)
+
+        market_data: Dict = {}
+        stock_code = company_info.get("stock_code", "")
+        if stock_code:
+            try:
+                market_data = await krx_service.get_stock_price(stock_code)
+            except Exception:
+                pass
+
+        # 증분: 캐시 무효화 후 prev_result 주입
+        cache_service.invalidate(corp_code, real_id, str(base_year))
+
+        result = await module_service.run_module(
+            module_id=module_id,
+            corp_code=corp_code,
+            company_info=company_info,
+            end_year=str(base_year),
+            years=years,
+            financials_by_year=financials_by_year,
+            financials_quarterly=financials_quarterly,
+            governance_data=governance_data,
+            disc_list=disc_list,
+            market_data=market_data,
+            stock_history={},
+            prev_result=body.prev_result,
+            use_cache=False,        # 강제 재분석
+        )
+        result["incremental"] = True
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"증분 분석 오류: {str(e)}")
+
+
+# ─── 개선 2: 비동기 메타 분석 + 폴링 ─────────────────────────────────
+
+async def _run_meta_analysis_background(
+    job_id: str,
+    corp_code: str,
+    base_year: int,
+) -> None:
+    """백그라운드 메타 분석 실행기"""
+    from datetime import date as _date
+
+    try:
+        job_service.update_job(job_id, "running", progress=5)
+        years = [str(base_year), str(base_year - 1), str(base_year - 2)]
+
+        disc_start = (_date.today() - timedelta(days=365 * 4)).strftime("%Y%m%d")
+        disc_end   = _date.today().strftime("%Y%m%d")
+
+        gather_results = await asyncio.gather(
+            dart_service.get_company_info(corp_code),
+            dart_service.get_financial_statement(corp_code, years[0], "11011"),
+            dart_service.get_financial_statement(corp_code, years[1], "11011"),
+            dart_service.get_financial_statement(corp_code, years[2], "11011"),
+            dart_service.get_major_shareholders(corp_code, str(base_year)),
+            dart_service.get_executives(corp_code, str(base_year)),
+            dart_service.get_disclosure_list(
+                corp_code, bgn_de=disc_start, end_de=disc_end, page_count=50
+            ),
+            return_exceptions=True,
+        )
+
+        company_info = gather_results[0] if not isinstance(gather_results[0], Exception) else {}
+        financials_by_year: Dict = {}
+        for i, year in enumerate(years):
+            raw = gather_results[1 + i]
+            if not isinstance(raw, Exception) and raw.get("status") != "013":
+                financials_by_year[year] = structure_financial_data(raw)
+
+        def _safe(r):
+            return r if not isinstance(r, Exception) and r.get("status") not in ("013", "020") else None
+
+        governance_data = {
+            "major_shareholders": _safe(gather_results[4]),
+            "executives":         _safe(gather_results[5]),
+        }
+        disc_raw  = gather_results[6]
+        disc_list = disc_raw.get("list", []) if not isinstance(disc_raw, Exception) else []
+
+        market_data: Dict = {}
+        stock_history: Dict = {}
+        stock_code = company_info.get("stock_code", "")
+        if stock_code:
+            try:
+                market_data = await krx_service.get_stock_price(stock_code)
+            except Exception:
+                pass
+            try:
+                hist_start = (_date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+                hist_end   = _date.today().strftime("%Y-%m-%d")
+                stock_history = await krx_service.get_stock_history(
+                    stock_code, hist_start, hist_end
+                )
+            except Exception:
+                pass
+
+        job_service.update_job(job_id, "running", progress=15)
+
+        ALL_MODULE_IDS = [
+            "comprehensive_corporate_analysis",
+            "key_financial_indicators",
+            "complete_financial_statements",
+            "business_segment_performance",
+            "shareholder_structure",
+            "board_executive_analysis",
+            "stock_price_movement_analysis",
+            "paid_in_capital_increase",
+            "preliminary_results",
+        ]
+        _S11_MODULES = {
+            "comprehensive_corporate_analysis",
+            "stock_price_movement_analysis",
+            "paid_in_capital_increase",
+            "preliminary_results",
+        }
+
+        # 9개 모듈 병렬 실행
+        module_tasks = [
+            module_service.run_module(
+                module_id=mid,
+                corp_code=corp_code,
+                company_info=company_info,
+                end_year=str(base_year),
+                years=years,
+                financials_by_year=financials_by_year,
+                financials_quarterly={},
+                governance_data=governance_data,
+                disc_list=disc_list,
+                market_data=market_data,
+                stock_history=stock_history if mid in _S11_MODULES else None,
+            )
+            for mid in ALL_MODULE_IDS
+        ]
+        module_raw_results = await asyncio.gather(*module_tasks, return_exceptions=True)
+
+        job_service.update_job(job_id, "running", progress=80)
+
+        module_outputs: Dict[str, Any]   = {}
+        module_summaries: Dict[str, Any] = {}
+        for mid, res in zip(ALL_MODULE_IDS, module_raw_results):
+            if not isinstance(res, Exception) and "result" in res:
+                module_outputs[mid]   = res["result"]
+                module_summaries[mid] = {
+                    "module_name":        res.get("module_name"),
+                    "status":             "success",
+                    "one_line_summary":   res["result"].get("one_line_summary", ""),
+                    "recommended_action": res["result"].get("recommended_action", ""),
+                    "confidence":         res["result"].get("confidence"),
+                }
+            else:
+                module_outputs[mid]   = {}
+                module_summaries[mid] = {
+                    "status": "failed",
+                    "error":  str(res) if isinstance(res, Exception) else "분석 실패",
+                }
+
+        meta_result = await module_service.run_meta_analysis(
+            corp_code=corp_code,
+            company_info=company_info,
+            end_year=str(base_year),
+            years=years,
+            module_outputs=module_outputs,
+        )
+
+        final = {
+            "corp_code":        corp_code,
+            "corp_name":        company_info.get("corp_name"),
+            "base_year":        str(base_year),
+            "years_covered":    years,
+            "module_summaries": module_summaries,
+            "module_outputs":   module_outputs,
+            **meta_result,
+        }
+        job_service.update_job(job_id, "completed", result=final, progress=100)
+
+    except Exception as e:
+        job_service.update_job(job_id, "failed", error=str(e))
+
+
+@router.post("/{corp_code}/meta-analysis/async")
+async def start_meta_analysis_async(
+    corp_code: str = Path(..., description="기업 고유번호"),
+    end_year:  str = Query("", description="종료 연도 (YYYY, 기본값: 전년도)"),
+) -> Dict[str, Any]:
+    """
+    비동기 메타 분석 시작 (job_id 반환)
+
+    9개 모듈 + 메타 분석을 백그라운드에서 실행합니다.
+    반환된 `job_id`로 `GET /jobs/{job_id}`를 폴링하여 진행률·결과를 확인하세요.
+
+    **예상 소요 시간**: 3~8분
+    """
+    base_year = int(end_year) if end_year.isdigit() else datetime.now().year - 1
+
+    job_id = job_service.create_job(
+        corp_code=corp_code,
+        task_type="meta_analysis",
+        meta={"base_year": str(base_year)},
+    )
+
+    # FastAPI 이벤트 루프에서 비동기 백그라운드 태스크 실행
+    asyncio.create_task(
+        _run_meta_analysis_background(job_id, corp_code, base_year)
+    )
+
+    return {
+        "job_id":    job_id,
+        "status":    "pending",
+        "corp_code": corp_code,
+        "base_year": str(base_year),
+        "poll_url":  f"/api/analysis/jobs/{job_id}",
+        "message":   "메타 분석이 시작되었습니다. job_id로 진행 상황을 확인하세요.",
+    }
+
+
+@router.get("/jobs/{job_id}")
+async def get_job_status(
+    job_id: str = Path(..., description="작업 ID"),
+) -> Dict[str, Any]:
+    """
+    백그라운드 작업 상태 폴링
+
+    - **status**: pending → running → completed | failed
+    - **progress**: 0~100 진행률
+    - **result**: 완료 시 메타 분석 결과 포함
+    - **error**: 실패 시 오류 메시지
+    """
+    job = job_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"작업을 찾을 수 없습니다: {job_id}")
+    return job
+
+
+@router.get("/jobs")
+async def list_jobs(
+    corp_code: str = Query("", description="기업 고유번호 필터 (미입력 시 전체)"),
+    limit: int = Query(20, ge=1, le=100, description="최대 반환 수"),
+) -> Dict[str, Any]:
+    """백그라운드 작업 목록 (최신순)"""
+    jobs = job_service.list_jobs(corp_code=corp_code or None, limit=limit)
+    return {"jobs": jobs, "total": len(jobs)}
 
 
 def _reprt_code_to_name(code: str) -> str:

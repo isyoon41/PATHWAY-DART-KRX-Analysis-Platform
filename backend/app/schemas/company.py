@@ -6,8 +6,8 @@ from datetime import datetime
 class SourceInfo(BaseModel):
     """데이터 출처 정보"""
     provider: str = Field(..., description="데이터 제공자")
-    url: str = Field(..., description="출처 URL")
-    retrieved_at: str = Field(..., description="데이터 조회 시각")
+    url: Optional[str] = Field(None, description="출처 URL")
+    retrieved_at: Optional[str] = Field(None, description="데이터 조회 시각")
     additional_info: Optional[Dict[str, Any]] = Field(None, description="추가 정보")
 
 
@@ -41,6 +41,7 @@ class CompanyInfo(BaseModel):
     fax_no: Optional[str] = Field(None, description="팩스번호")
     induty_code: Optional[str] = Field(None, description="업종코드")
     est_dt: Optional[str] = Field(None, description="설립일")
+    listing_dt: Optional[str] = Field(None, description="상장일")
     acc_mt: Optional[str] = Field(None, description="결산월")
     source: SourceInfo = Field(..., description="출처 정보", alias="_source")
 

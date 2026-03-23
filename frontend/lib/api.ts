@@ -160,6 +160,94 @@ export interface AIReportData {
 }
 
 // ─────────────────────────────────────────────
+// VC/PE 모듈 결과 (strict JSON skeleton)
+// ─────────────────────────────────────────────
+export interface VcpeScorecard {
+  성장성?: number;
+  수익성?: number;
+  현금창출?: number;
+  자본효율?: number;
+  거버넌스?: number;
+  [key: string]: number | undefined;
+}
+
+export interface VcpeSignal {
+  signal: string;
+  evidence?: string;
+  importance?: 'high' | 'medium' | 'low' | string;
+}
+
+export interface VcpeVcView {
+  summary?: string;
+  upside_drivers?: string[];
+  key_risks?: string[];
+  entry_strategy?: string;
+}
+
+export interface VcpePeView {
+  summary?: string;
+  value_creation_levers?: string[];
+  exit_considerations?: string[];
+  ebitda_assessment?: string;
+}
+
+export interface VcpeConfidence {
+  overall?: number;
+  data_quality?: number;
+  analysis_depth?: number;
+}
+
+export interface VcpeRisks {
+  temporary?: string[];
+  structural?: string[];
+  fatal?: string[];
+}
+
+export interface VcpeModuleResultData {
+  one_line_summary?: string;
+  scorecard?: VcpeScorecard;
+  key_facts?: string[];
+  positive_signals?: VcpeSignal[];
+  negative_signals?: VcpeSignal[];
+  vc_view?: VcpeVcView;
+  pe_view?: VcpePeView;
+  recommended_action?: string;
+  evidence_map?: Record<string, string>;
+  confidence?: VcpeConfidence;
+  risks?: VcpeRisks;
+  [key: string]: any;
+}
+
+export interface ModuleResult {
+  module_id: string;
+  module_name: string;
+  corp_name: string;
+  corp_code?: string;
+  base_year?: string;
+  period: string;
+  generated_at: string;
+  model: string;
+  report?: string;                      // 마크다운 폴백
+  result?: VcpeModuleResultData;        // strict JSON
+  incremental?: boolean;
+}
+
+// ─────────────────────────────────────────────
+// 메타 분석 / 백그라운드 작업
+// ─────────────────────────────────────────────
+export interface JobStatus {
+  job_id: string;
+  corp_code: string;
+  task_type: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  created_at: string;
+  updated_at: string;
+  result?: any;
+  error?: string;
+}
+
+// ─────────────────────────────────────────────
 // 분석 설정
 // ─────────────────────────────────────────────
 export interface AnalysisOptions {
@@ -244,6 +332,70 @@ export const analysisAPI = {
 
   getSummary: async (corpCode: string) => {
     const response = await api.get(`/api/analysis/${corpCode}/summary`);
+    return response.data;
+  },
+
+  // ── VC/PE 모듈 분석 ──────────────────────────────────────────────
+  runModule: async (
+    corpCode: string,
+    moduleId: string,
+    endYear?: string,
+  ): Promise<ModuleResult> => {
+    const params = endYear ? { end_year: endYear } : {};
+    const response = await api.post(
+      `/api/analysis/${corpCode}/module/${moduleId}`,
+      null,
+      { params, timeout: 300_000 },
+    );
+    return response.data;
+  },
+
+  // ── 증분(PATCH) 분석 ─────────────────────────────────────────────
+  runIncrementalModule: async (
+    corpCode: string,
+    moduleId: string,
+    endYear: string,
+    prevResult?: VcpeModuleResultData,
+  ): Promise<ModuleResult> => {
+    const response = await api.patch(
+      `/api/analysis/${corpCode}/module/${moduleId}`,
+      { end_year: endYear, prev_result: prevResult ?? null },
+      { timeout: 300_000 },
+    );
+    return response.data;
+  },
+
+  // ── 비동기 메타 분석 시작 ────────────────────────────────────────
+  startMetaAnalysisAsync: async (
+    corpCode: string,
+    endYear?: string,
+  ): Promise<{ job_id: string; status: string; poll_url: string }> => {
+    const params = endYear ? { end_year: endYear } : {};
+    const response = await api.post(
+      `/api/analysis/${corpCode}/meta-analysis/async`,
+      null,
+      { params },
+    );
+    return response.data;
+  },
+
+  // ── 동기 메타 분석 (기존 유지) ───────────────────────────────────
+  runMetaAnalysis: async (
+    corpCode: string,
+    endYear?: string,
+  ) => {
+    const params = endYear ? { end_year: endYear } : {};
+    const response = await api.post(
+      `/api/analysis/${corpCode}/meta-analysis`,
+      null,
+      { params, timeout: 600_000 },
+    );
+    return response.data;
+  },
+
+  // ── 작업 폴링 ────────────────────────────────────────────────────
+  pollJob: async (jobId: string): Promise<JobStatus> => {
+    const response = await api.get(`/api/analysis/jobs/${jobId}`);
     return response.data;
   },
 };

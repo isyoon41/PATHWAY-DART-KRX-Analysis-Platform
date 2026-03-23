@@ -1,35 +1,13 @@
 """
-분석 모듈 서비스 v2 — VC/PE 강화형 프롬프트 팩
+분석 모듈 서비스 v2.1 — VC/PE 강화형 프롬프트 팩
 
-prompt_pack: darty_vcpe_investment_analysis_modules v2.0
-
-아키텍처:
-  1단계: 9개 모듈이 각자 담당 섹션(S1~S11)만 읽어 strict JSON 출력
-  2단계: 메타 분석이 9개 JSON을 통합해 투자위원회 수준 판단 생성
-
-섹션 정의 (S1~S11):
-  S1  — 기업 개요 (DART 원문)
-  S2  — 사업의 내용 (DART 원문)
-  S3  — 사업부문 정보 (S2와 동일 소스)
-  S4  — 위험요인 (DART 원문, fallback: S2)
-  S5  — 주주구조 (DART API)
-  S6  — 이사회·임원 (DART 원문 + API)
-  S7  — 재무제표 (DART XBRL 구조화)
-  S8  — 재무주석 (DART 원문 financial_info 섹션)
-  S9  — 자본조달 이벤트 (공시 필터링)
-  S10 — 잠정·이벤트 공시 (공시 목록)
-  S11 — 시장 데이터 (KRX/네이버/FDR)
-
-9개 분석 모듈:
-  comprehensive_corporate_analysis  — 종합 기업분석
-  key_financial_indicators          — 핵심 재무지표
-  complete_financial_statements     — 전체 재무제표 심층
-  business_segment_performance      — 사업부문별 실적
-  shareholder_structure             — 주주구조
-  board_executive_analysis          — 이사회·경영진
-  stock_price_movement_analysis     — 주가 변동
-  paid_in_capital_increase          — 유상증자·자본조달
-  preliminary_results               — 잠정실적·속보
+개선 사항:
+  1. DART 사업보고서 탐색: disc_list fallback + get_annual_report_rcept_no()
+  3. S8 재무주석: audit_opinion 섹션 전용 사용
+  5. 파일 기반 캐시 통합 (24h TTL)
+  6. Gemini 세마포어(동시 3개) + 지수 백오프 재시도
+  7. 분기 재무 데이터 S7에 통합
+  8. 모듈별 max_tokens 최적화
 """
 import asyncio
 import json
@@ -43,6 +21,7 @@ from app.services.dart_parser import create_parser
 from app.services.dart_service import dart_service
 from app.services.financial_parser import structure_financial_data
 from app.services.krx_service import krx_service
+from app.services.cache_service import get_cached, set_cached
 from google import genai
 from google.genai import types as genai_types
 
@@ -66,7 +45,32 @@ except Exception as _e:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# S1-S11 섹션 정의
+# 개선 6: Gemini 동시 호출 세마포어 (최대 3개 병렬)
+# ══════════════════════════════════════════════════════════════════════
+
+_GEMINI_SEMAPHORE = asyncio.Semaphore(3)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 개선 8: 모듈별 max_tokens 최적화
+# ══════════════════════════════════════════════════════════════════════
+
+MODULE_TOKENS: Dict[str, int] = {
+    "comprehensive_corporate_analysis":  16384,  # 최대 → 전체 분석
+    "key_financial_indicators":           8192,
+    "complete_financial_statements":      8192,
+    "business_segment_performance":       8192,
+    "shareholder_structure":              4096,  # 단순 구조 분석
+    "board_executive_analysis":           4096,
+    "stock_price_movement_analysis":      8192,
+    "paid_in_capital_increase":           8192,
+    "preliminary_results":                8192,
+    "_meta":                             32768,  # 메타 분석 최대
+}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# S1-S11 섹션 정의 (개선 3: S8 → audit_opinion)
 # ══════════════════════════════════════════════════════════════════════
 
 SECTION_DEFINITIONS: Dict[str, Dict] = {
@@ -80,7 +84,9 @@ SECTION_DEFINITIONS: Dict[str, Dict] = {
              "also": "executives"},
     "S7":  {"dart_code": "financial_info",   "name": "재무제표",          "char_limit": 15000,
              "also": "audit_opinion"},
-    "S8":  {"dart_code": "financial_info",   "name": "재무주석",          "char_limit": 15000},
+    # 개선 3: S8은 audit_opinion 전용 (감사인 의견 + 핵심감사사항 = 실질 재무주석)
+    "S8":  {"dart_code": "audit_opinion",    "name": "감사의견·재무주석", "char_limit": 12000,
+             "fallback": "financial_info"},
     "S9":  {"dart_code": None,               "name": "자본조달 이벤트",  "char_limit": 0},
     "S10": {"dart_code": None,               "name": "잠정·이벤트 공시", "char_limit": 0},
     "S11": {"dart_code": None,               "name": "시장 데이터",       "char_limit": 0},
@@ -96,7 +102,6 @@ _CAPITAL_KEYWORDS = [
 # MODULES 딕셔너리 (프롬프트 팩에서 동적 생성)
 # ══════════════════════════════════════════════════════════════════════
 
-# 구 ID → 신 ID 하위 호환 매핑
 MODULE_ID_ALIAS: Dict[str, str] = {
     "comprehensive":     "comprehensive_corporate_analysis",
     "key_financials":    "key_financial_indicators",
@@ -123,54 +128,69 @@ for _mid, _mdef in _PACK.get("modules", {}).items():
         "uses_governance":   any(s in ["S5", "S6"] for s in _mdef.get("required_sections", [])),
         "uses_disclosures":  any(s in ["S9", "S10"] for s in _mdef.get("required_sections", [])),
         "uses_market_data":  "S11" in _mdef.get("required_sections", []),
-        "max_tokens":        8192,
+        "max_tokens":        MODULE_TOKENS.get(_mid, 8192),
     }
 
 
 # ══════════════════════════════════════════════════════════════════════
-# DART HTML 섹션 수집 헬퍼
+# 개선 1: DART HTML 섹션 수집 (disc_list + get_annual_report_rcept_no 폴백)
 # ══════════════════════════════════════════════════════════════════════
 
 async def _fetch_sections_from_report(
     corp_code: str,
     disc_list: List[Dict],
     section_ids: List[str],
+    end_year: Optional[int] = None,   # ← 개선 1: 폴백용 연도 추가
 ) -> Dict[str, Dict]:
     """
-    공시 목록에서 사업보고서 HTML → 지정 섹션 추출
-    Returns: { "S1": {"title":..., "content":..., ...}, ... }
+    사업보고서 HTML → 지정 섹션 추출
+
+    탐색 우선순위:
+      1) disc_list에서 사업보고서 접수번호 추출
+      2) 없으면 dart_service.get_annual_report_rcept_no() 직접 호출 (개선 1)
     """
     dart_codes_needed: List[str] = []
     for sid in section_ids:
         sdef = SECTION_DEFINITIONS.get(sid, {})
-        dc = sdef.get("dart_code")
-        if dc and dc not in dart_codes_needed:
-            dart_codes_needed.append(dc)
-        also = sdef.get("also")
-        if also and also not in dart_codes_needed:
-            dart_codes_needed.append(also)
-        fb = sdef.get("fallback")
-        if fb and fb not in dart_codes_needed:
-            dart_codes_needed.append(fb)
+        for key in ("dart_code", "also", "fallback"):
+            code = sdef.get(key)
+            if code and code not in dart_codes_needed:
+                dart_codes_needed.append(code)
 
     if not dart_codes_needed:
         return {}
 
+    # ── 1차: disc_list에서 사업보고서 검색 ──────────────────────────
+    rcept_no = ""
+    rcept_dt = ""
     annual = [
         d for d in disc_list
         if "사업보고서" in d.get("report_nm", "")
         and "정정" not in d.get("report_nm", "")
     ]
-    if not annual:
-        return {}
+    if annual:
+        rcept_no = annual[0].get("rcept_no", "")
+        rcept_dt = annual[0].get("rcept_dt", "")
 
-    rcept_no = annual[0].get("rcept_no", "")
-    rcept_dt = annual[0].get("rcept_dt", "")
+    # ── 2차: 개선 1 — get_annual_report_rcept_no() 폴백 ────────────
+    if not rcept_no and end_year:
+        try:
+            annual_meta = await asyncio.wait_for(
+                dart_service.get_annual_report_rcept_no(corp_code, end_year),
+                timeout=15.0,
+            )
+            if annual_meta and annual_meta.get("rcept_no"):
+                rcept_no = annual_meta["rcept_no"]
+                rcept_dt = annual_meta.get("rcept_dt", "")
+        except Exception:
+            pass
+
     if not rcept_no:
         return {}
 
+    # ── 사업보고서 HTML 다운로드 & 섹션 분해 ─────────────────────────
     try:
-        parser = create_parser(settings.dart_api_key)
+        parser   = create_parser(settings.dart_api_key)
         doc_files = await asyncio.wait_for(
             parser.fetch_report_index(rcept_no), timeout=25.0
         )
@@ -201,8 +221,8 @@ async def _fetch_sections_from_report(
 
         result: Dict[str, Dict] = {}
         for sid in section_ids:
-            sdef      = SECTION_DEFINITIONS.get(sid, {})
-            dc        = sdef.get("dart_code")
+            sdef       = SECTION_DEFINITIONS.get(sid, {})
+            dc         = sdef.get("dart_code")
             char_limit = sdef.get("char_limit", 10000)
             if dc and dc in dart_map:
                 data = dict(dart_map[dc])
@@ -213,13 +233,12 @@ async def _fetch_sections_from_report(
             if fb and fb in dart_map:
                 data = dict(dart_map[fb])
                 data["content"] = data["content"][:char_limit]
-                data["title"] += " (위험요인 섹션 없음 — 사업의 내용에서 발췌)"
+                data["title"] += " (해당 섹션 없음 — fallback)"
                 result[sid] = data
 
-        # S6: executives 내용 추가
+        # S6: executives 추가
         if "S6" in section_ids and "executives" in dart_map and "S6" in result:
-            exec_content = dart_map["executives"].get("content", "")[:4000]
-            result["S6"]["content"] += f"\n\n[임원 현황]\n{exec_content}"
+            result["S6"]["content"] += "\n\n[임원 현황]\n" + dart_map["executives"].get("content", "")[:4000]
 
         return result
 
@@ -228,37 +247,62 @@ async def _fetch_sections_from_report(
 
 
 # ══════════════════════════════════════════════════════════════════════
-# 재무 데이터 포맷 헬퍼
+# 재무 포맷 헬퍼
 # ══════════════════════════════════════════════════════════════════════
 
-def _fmt_financials(financials: Dict[str, Any], years: List[str]) -> str:
+def _fmt_financials(
+    financials_by_year: Dict[str, Any],
+    years: List[str],
+    financials_quarterly: Optional[Dict[str, Any]] = None,   # 개선 7
+) -> str:
+    """연간 XBRL 재무 + 분기 실적 통합 텍스트"""
     lines = []
     for yr in years:
-        f = financials.get(yr, {})
+        f = financials_by_year.get(yr, {})
         if not f:
             continue
-        inc   = f.get("income_statement", {})
-        bal   = f.get("balance_sheet", {})
-        rat   = f.get("ratios", {})
-        cur_i = inc.get("current", {})
-        cur_b = bal.get("current", {})
+        inc    = f.get("income_statement", {})
+        bal    = f.get("balance_sheet", {})
+        rat    = f.get("ratios", {})
+        cur_i  = inc.get("current", {})
+        cur_b  = bal.get("current", {})
         prev_i = inc.get("previous", {})
         lines.append(
-            f"[{yr}년 재무 — DART XBRL]\n"
-            f"  매출액:        {cur_i.get('revenue','N/A'):>15,} 천원"
+            f"[{yr}년 연간 재무 — DART XBRL]\n"
+            f"  매출액:      {cur_i.get('revenue','N/A'):>15,} 천원"
             f"  (전기: {prev_i.get('revenue','N/A')})\n"
-            f"  영업이익:      {cur_i.get('operating_profit','N/A'):>15,} 천원\n"
-            f"  당기순이익:    {cur_i.get('net_income','N/A'):>15,} 천원\n"
-            f"  총자산:        {cur_b.get('total_assets','N/A'):>15,} 천원\n"
-            f"  자기자본:      {cur_b.get('total_equity','N/A'):>15,} 천원\n"
-            f"  부채총계:      {cur_b.get('total_liabilities','N/A'):>15,} 천원\n"
-            f"  영업이익률:    {rat.get('operating_margin_pct','N/A'):>8}%\n"
-            f"  순이익률:      {rat.get('net_margin_pct','N/A'):>8}%\n"
-            f"  ROE:           {rat.get('roe_pct','N/A'):>8}%  |  "
-            f"ROA: {rat.get('roa_pct','N/A'):>8}%\n"
-            f"  부채비율:      {rat.get('debt_ratio_pct','N/A'):>8}%  |  "
-            f"유동비율: {rat.get('current_ratio_pct','N/A'):>8}%"
+            f"  영업이익:    {cur_i.get('operating_profit','N/A'):>15,} 천원\n"
+            f"  당기순이익:  {cur_i.get('net_income','N/A'):>15,} 천원\n"
+            f"  총자산:      {cur_b.get('total_assets','N/A'):>15,} 천원\n"
+            f"  자기자본:    {cur_b.get('total_equity','N/A'):>15,} 천원\n"
+            f"  영업이익률:  {rat.get('operating_margin_pct','N/A'):>8}%  "
+            f"순이익률: {rat.get('net_margin_pct','N/A'):>8}%\n"
+            f"  ROE: {rat.get('roe_pct','N/A'):>8}%  "
+            f"ROA: {rat.get('roa_pct','N/A'):>8}%  "
+            f"부채비율: {rat.get('debt_ratio_pct','N/A'):>8}%"
         )
+
+    # 개선 7: 분기 데이터 추가
+    if financials_quarterly:
+        qtr_lines = []
+        for qtr_key in sorted(financials_quarterly.keys(), reverse=True)[:8]:
+            qf = financials_quarterly.get(qtr_key, {})
+            if not qf:
+                continue
+            inc_q = qf.get("income_statement", {}).get("current", {})
+            rat_q = qf.get("ratios", {})
+            rev   = inc_q.get("revenue", "N/A")
+            op    = inc_q.get("operating_profit", "N/A")
+            ni    = inc_q.get("net_income", "N/A")
+            opm   = rat_q.get("operating_margin_pct", "N/A")
+            qtr_lines.append(
+                f"  [{qtr_key}] 매출:{rev:>12,}  영업:{op:>12,}  순익:{ni:>12,}  OPM:{opm}%"
+                if isinstance(rev, (int, float)) else
+                f"  [{qtr_key}] 데이터 없음"
+            )
+        if qtr_lines:
+            lines.append("[분기별 실적 추이 — DART XBRL]\n" + "\n".join(qtr_lines))
+
     return "\n\n".join(lines) if lines else "[XBRL 재무 데이터 없음]"
 
 
@@ -271,7 +315,7 @@ def _fmt_disc_list(disc_list: List[Dict], limit: int = 40) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# S1~S11 섹션 문자열 조립
+# S1~S11 섹션 문자열 조립 (개선 7: 분기 데이터 통합)
 # ══════════════════════════════════════════════════════════════════════
 
 def _assemble_section_strings(
@@ -282,30 +326,22 @@ def _assemble_section_strings(
     disc_list: List[Dict],
     market_data: Dict,
     stock_history: Optional[Dict] = None,
+    financials_quarterly: Optional[Dict[str, Any]] = None,  # 개선 7
 ) -> Dict[str, str]:
-    """S1~S11 각 섹션을 LLM이 읽을 수 있는 텍스트 문자열로 변환"""
+    """S1~S11 각 섹션을 LLM용 텍스트로 변환"""
     s: Dict[str, str] = {}
 
-    # S1 기업 개요
     s["S1"] = fetched_sections.get("S1", {}).get("content") or "[기업 개요 없음]"
-
-    # S2 사업의 내용
     s["S2"] = fetched_sections.get("S2", {}).get("content") or "[사업내용 없음]"
-
-    # S3 사업부문 정보 (S2와 동일 소스)
     s["S3"] = s["S2"]
-
-    # S4 위험요인
     s["S4"] = fetched_sections.get("S4", {}).get("content") or "[위험요인 없음]"
 
-    # S5 주주구조 (DART API JSON)
     sh = governance_data.get("major_shareholders")
     s["S5"] = (
         json.dumps(sh, ensure_ascii=False, indent=2)[:5000]
         if sh else "[주주구조 데이터 없음]"
     )
 
-    # S6 이사회·임원 (DART 원문 + API)
     s["S6"] = fetched_sections.get("S6", {}).get("content") or ""
     ex = governance_data.get("executives")
     if ex:
@@ -313,41 +349,34 @@ def _assemble_section_strings(
     if not s["S6"].strip():
         s["S6"] = "[이사회·임원 데이터 없음]"
 
-    # S7 재무제표 (XBRL 구조화)
-    s["S7"] = _fmt_financials(financials_by_year, years)
+    # 개선 7: S7에 분기 데이터 포함
+    s["S7"] = _fmt_financials(financials_by_year, years, financials_quarterly)
 
-    # S8 재무주석 (DART 원문 financial_info)
-    s["S8"] = fetched_sections.get("S7", {}).get("content") or "[재무주석 없음]"
+    # 개선 3: S8은 audit_opinion (감사의견 섹션)
+    s["S8"] = fetched_sections.get("S8", {}).get("content") or "[감사의견 없음]"
 
-    # S9 자본조달 이벤트 (키워드 필터링)
     capital_discs = [
         d for d in disc_list
         if any(kw in d.get("report_nm", "") for kw in _CAPITAL_KEYWORDS)
     ]
-    s["S9"] = (
-        _fmt_disc_list(capital_discs, 30)
-        if capital_discs else "[자본조달 관련 공시 없음]"
-    )
-
-    # S10 잠정·이벤트 공시
+    s["S9"] = _fmt_disc_list(capital_discs, 30) if capital_discs else "[자본조달 관련 공시 없음]"
     s["S10"] = _fmt_disc_list(disc_list, 40)
 
-    # S11 시장 데이터 (현재가 + 일자별 주가)
     s11_parts = []
     if market_data and "error" not in market_data:
         s11_parts.append(
-            "[현재가 데이터 (KRX/네이버 금융)]\n"
+            "[현재가 (KRX/네이버 금융)]\n"
             + json.dumps(market_data, ensure_ascii=False, indent=2)[:1500]
         )
     if stock_history and "error" not in stock_history:
         records = stock_history.get("records", [])
         if records:
-            sample = records[-90:]
+            sample   = records[-90:]
             provider = stock_history.get("_source", {}).get("provider", "FDR")
             s11_parts.append(
                 f"[일자별 주가 ({provider}) | "
                 f"{stock_history.get('start_date','')} ~ {stock_history.get('end_date','')}]\n"
-                f"총 {len(records)}거래일, 최근 {len(sample)}거래일 표시:\n"
+                f"총 {len(records)}거래일, 최근 {len(sample)}거래일:\n"
                 + "\n".join(
                     f"  {r['date']}  종가:{r['close']:>10,.0f}  "
                     f"고가:{r['high']:>10,.0f}  저가:{r['low']:>10,.0f}  거래량:{r['volume']:>12,}"
@@ -369,7 +398,6 @@ def _fill_template(
     time_info: Dict,
     sections: Dict[str, str],
 ) -> str:
-    """{{company.X}}, {{time.X}}, {{sections.SX}} 치환"""
     r = template
     r = r.replace("{{company.corp_name}}",  company.get("corp_name", ""))
     r = r.replace("{{company.corp_code}}",  company.get("corp_code", ""))
@@ -388,8 +416,8 @@ def _fill_meta_template(
     company: Dict,
     time_info: Dict,
     module_outputs: Dict[str, Any],
+    prev_result: Optional[Dict] = None,   # 개선 9: 증분 분석용
 ) -> str:
-    """메타 프롬프트 {{module_outputs.X}} 치환"""
     r = template
     r = r.replace("{{company.corp_name}}",  company.get("corp_name", ""))
     r = r.replace("{{company.corp_code}}",  company.get("corp_code", ""))
@@ -407,22 +435,19 @@ def _fill_meta_template(
 
 
 def _parse_json_response(text: str) -> Dict:
-    """LLM 응답 텍스트에서 JSON 추출 및 파싱"""
-    # 코드펜스 제거
+    """LLM 응답에서 JSON 추출 파싱"""
     text = re.sub(r"```(?:json)?\s*", "", text).strip()
-    text = re.sub(r"```\s*$",         "", text).strip()
+    text = re.sub(r"```\s*$", "", text).strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # 첫 번째 { ... } 블록 추출 시도
     m = re.search(r"\{[\s\S]*\}", text)
     if m:
         try:
             return json.loads(m.group())
         except json.JSONDecodeError:
             pass
-    # 파싱 실패 시 원문 보존
     return {"raw_response": text, "_parse_error": "JSON 파싱 실패"}
 
 
@@ -442,12 +467,10 @@ class ModuleAnalysisService:
         self,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 8192,
+        max_tokens: int,
     ) -> str:
         if self.client is None:
-            raise ValueError(
-                "GOOGLE_API_KEY가 설정되지 않았습니다. AI 분석을 사용하려면 환경변수를 설정해주세요."
-            )
+            raise ValueError("GOOGLE_API_KEY가 설정되지 않았습니다.")
         response = self.client.models.generate_content(
             model=self.model,
             contents=user_prompt,
@@ -458,6 +481,38 @@ class ModuleAnalysisService:
             ),
         )
         return response.text
+
+    async def _call_gemini_with_retry(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+        max_retries: int = 3,
+    ) -> str:
+        """개선 6: 세마포어(최대 3 병렬) + 지수 백오프 재시도"""
+        loop = asyncio.get_event_loop()
+        last_exc: Exception = RuntimeError("Gemini 호출 실패")
+
+        for attempt in range(max_retries):
+            try:
+                async with _GEMINI_SEMAPHORE:
+                    return await loop.run_in_executor(
+                        None,
+                        lambda: self._call_gemini(system_prompt, user_prompt, max_tokens),
+                    )
+            except Exception as exc:
+                last_exc = exc
+                err_str  = str(exc)
+                # Rate limit 또는 서버 오류 → 재시도
+                if attempt < max_retries - 1 and any(
+                    kw in err_str for kw in ("429", "RESOURCE_EXHAUSTED", "503", "500")
+                ):
+                    wait_secs = (2 ** attempt) * 5  # 5s, 10s, 20s
+                    await asyncio.sleep(wait_secs)
+                else:
+                    raise exc
+
+        raise last_exc
 
     async def run_module(
         self,
@@ -472,21 +527,28 @@ class ModuleAnalysisService:
         disc_list: List[Dict],
         market_data: Dict,
         stock_history: Optional[Dict] = None,
+        prev_result: Optional[Dict] = None,   # 개선 9: 증분 분석용
+        use_cache: bool = True,               # 개선 5: 캐시 활성화 여부
     ) -> Dict[str, Any]:
         """
-        단일 모듈 분석 실행 — VC/PE 프롬프트 팩 v2
-
-        출력: strict JSON 객체 (module_output_json_skeleton 기준)
+        단일 모듈 분석 — VC/PE 프롬프트 팩 v2.1
+        출력: strict JSON (module_output_json_skeleton 기준)
         """
-        # 구 ID → 신 ID 변환
-        real_id    = MODULE_ID_ALIAS.get(module_id, module_id)
-        module_def = _PACK.get("modules", {}).get(real_id)
+        real_id     = MODULE_ID_ALIAS.get(module_id, module_id)
+        module_def  = _PACK.get("modules", {}).get(real_id)
         module_meta = MODULES.get(real_id)
 
         if not module_def or not module_meta:
             return {"error": f"알 수 없는 모듈: {module_id}"}
 
-        # ── 1. DART HTML 섹션 수집 ────────────────────────────────────
+        # ── 개선 5: 캐시 확인 (증분·강제 재실행 제외) ─────────────────
+        if use_cache and not prev_result:
+            cached = get_cached(corp_code, real_id, years[0])
+            if cached:
+                cached["_from_cache"] = True
+                return cached
+
+        # ── 1. DART HTML 섹션 수집 (개선 1 적용) ─────────────────────
         all_s_ids = list(dict.fromkeys(
             module_def.get("required_sections", [])
             + module_def.get("optional_sections", [])
@@ -497,10 +559,13 @@ class ModuleAnalysisService:
         ]
 
         fetched: Dict[str, Dict] = {}
-        if parser_s_ids and disc_list:
-            fetched = await _fetch_sections_from_report(corp_code, disc_list, parser_s_ids)
+        if parser_s_ids:
+            end_year_int = int(end_year) if end_year and end_year.isdigit() else None
+            fetched = await _fetch_sections_from_report(
+                corp_code, disc_list, parser_s_ids, end_year=end_year_int
+            )
 
-        # ── 2. S1~S11 섹션 문자열 조립 ───────────────────────────────
+        # ── 2. S1~S11 문자열 조립 (개선 7 포함) ─────────────────────
         section_strings = _assemble_section_strings(
             fetched_sections=fetched,
             financials_by_year=financials_by_year,
@@ -509,9 +574,10 @@ class ModuleAnalysisService:
             disc_list=disc_list,
             market_data=market_data,
             stock_history=stock_history,
+            financials_quarterly=financials_quarterly,
         )
 
-        # ── 3. 시간 정보 구성 ─────────────────────────────────────────
+        # ── 3. 시간 정보 ────────────────────────────────────────────────
         today      = datetime.now().strftime("%Y-%m-%d")
         start_year = years[-1] if years else end_year
         time_info  = {
@@ -521,7 +587,7 @@ class ModuleAnalysisService:
             "compare_mode": "yoy",
         }
 
-        # ── 4. 프롬프트 조립 ─────────────────────────────────────────
+        # ── 4. 프롬프트 조립 ────────────────────────────────────────────
         system_prompt = (
             _PACK["shared_system_prompt"]
             + "\n\n"
@@ -534,19 +600,34 @@ class ModuleAnalysisService:
             sections=section_strings,
         )
 
-        # ── 5. Gemini 호출 (동기 → thread 실행) ──────────────────────
-        loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(
-            None,
-            lambda: self._call_gemini(system_prompt, user_prompt, max_tokens=8192),
+        # 개선 9: 증분 분석 — 이전 결과를 컨텍스트에 추가
+        if prev_result:
+            prev_summary = json.dumps(
+                {k: prev_result.get(k) for k in (
+                    "one_line_summary", "recommended_action",
+                    "positive_signals", "negative_signals",
+                    "structural_risks", "fatal_risks", "confidence"
+                )},
+                ensure_ascii=False, indent=2,
+            )
+            user_prompt = (
+                f"[이전 분석 결과 (증분 업데이트 기준)]\n{prev_summary}\n\n"
+                "[지침] 위 이전 결과를 참고하되, 아래 최신 데이터로 변경된 항목만 업데이트하라.\n\n"
+                + user_prompt
+            )
+
+        # ── 5. Gemini 호출 (개선 6: 세마포어 + 재시도) ─────────────────
+        max_tokens = module_meta.get("max_tokens", 8192)
+        raw_text   = await self._call_gemini_with_retry(
+            system_prompt, user_prompt, max_tokens
         )
 
-        # ── 6. JSON 파싱 ──────────────────────────────────────────────
+        # ── 6. JSON 파싱 ────────────────────────────────────────────────
         result_json = _parse_json_response(raw_text)
 
         corp_name  = company_info.get("corp_name", corp_code)
         period_str = f"{start_year}~{end_year}년"
-        return {
+        output = {
             "module_id":    real_id,
             "module_name":  module_meta["name"],
             "report":       json.dumps(result_json, ensure_ascii=False, indent=2),
@@ -555,7 +636,14 @@ class ModuleAnalysisService:
             "model":        self.model,
             "corp_name":    corp_name,
             "period":       period_str,
+            "is_incremental": bool(prev_result),
         }
+
+        # 개선 5: 캐시 저장 (증분 분석은 캐시하지 않음)
+        if use_cache and not prev_result and "_parse_error" not in result_json:
+            set_cached(corp_code, real_id, years[0], output)
+
+        return output
 
     async def run_meta_analysis(
         self,
@@ -566,10 +654,8 @@ class ModuleAnalysisService:
         module_outputs: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        메타 종합 분석 — 9개 모듈 JSON → 투자위원회 심층 판단
-
-        prompt: deep_composite_investment_analysis
-        출력: meta_output_json_skeleton 기준 strict JSON
+        메타 종합 분석 — deep_composite_investment_analysis
+        9개 모듈 JSON → 투자위원회 종합 판단 (strict JSON)
         """
         meta_def = _PACK.get("meta_prompts", {}).get(
             "deep_composite_investment_analysis", {}
@@ -598,15 +684,14 @@ class ModuleAnalysisService:
             module_outputs=module_outputs,
         )
 
-        loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(
-            None,
-            lambda: self._call_gemini(system_prompt, user_prompt, max_tokens=16384),
+        # 개선 6: 세마포어 + 재시도, 개선 8: 메타 전용 토큰 한도
+        raw_text    = await self._call_gemini_with_retry(
+            system_prompt, user_prompt,
+            max_tokens=MODULE_TOKENS["_meta"],
         )
-
         result_json = _parse_json_response(raw_text)
-        corp_name   = company_info.get("corp_name", corp_code)
 
+        corp_name = company_info.get("corp_name", corp_code)
         return {
             "analysis_type": "deep_composite_investment_analysis",
             "corp_name":     corp_name,

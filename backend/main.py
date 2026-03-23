@@ -1,3 +1,12 @@
+import os
+from pathlib import Path
+
+# .env를 pydantic_settings가 읽기 전에 환경변수로 직접 로드
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=_env_path, override=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
@@ -45,5 +54,5 @@ if __name__ == "__main__":
         "main:app",
         host=settings.api_host,
         port=settings.api_port,
-        reload=settings.debug
+        reload=False  # reload=True 시 포트 충돌 발생
     )
