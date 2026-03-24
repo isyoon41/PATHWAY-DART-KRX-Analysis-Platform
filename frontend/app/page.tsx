@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import {
   TrendingUp, Database, Shield, Brain,
-  Calendar, BarChart3, FileText, Info, ChevronRight, X, Layers,
+  Calendar, BarChart3, FileText, Info, ChevronRight, X, Layers, HelpCircle,
 } from 'lucide-react';
 import CompanySearch from '@/components/CompanySearch';
 import LoadingProgress from '@/components/LoadingProgress';
@@ -333,18 +334,27 @@ export default function Home() {
                 <p className="text-[10px] text-white/50 font-medium tracking-widest">DART·KRX Analysis Platform</p>
               </div>
             </button>
-            {selectedCompany && step === 'search' && (
-              <div className="hidden md:flex items-center gap-2 text-[12px] text-white/70 bg-white/10 border border-white/20 px-3 py-1.5">
-                <span className="font-semibold text-white">{selectedCompany.corp_name}</span>
-                {selectedCompany.stock_code && <span className="text-white/40">{selectedCompany.stock_code}</span>}
-                <span className="text-white/30">|</span>
-                <span>
-                  {options.startYear}/{QTR_OPTIONS.find(q=>q.value===options.startQtr)?.label}
-                  &nbsp;~&nbsp;
-                  {options.endYear}/{QTR_OPTIONS.find(q=>q.value===options.endQtr)?.label}
-                </span>
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              {selectedCompany && step === 'search' && (
+                <div className="hidden md:flex items-center gap-2 text-[12px] text-white/70 bg-white/10 border border-white/20 px-3 py-1.5">
+                  <span className="font-semibold text-white">{selectedCompany.corp_name}</span>
+                  {selectedCompany.stock_code && <span className="text-white/40">{selectedCompany.stock_code}</span>}
+                  <span className="text-white/30">|</span>
+                  <span>
+                    {options.startYear}/{QTR_OPTIONS.find(q=>q.value===options.startQtr)?.label}
+                    &nbsp;~&nbsp;
+                    {options.endYear}/{QTR_OPTIONS.find(q=>q.value===options.endQtr)?.label}
+                  </span>
+                </div>
+              )}
+              <Link
+                href="/faq"
+                className="flex items-center gap-1.5 text-[12px] text-white/60 hover:text-white transition-colors border border-white/20 hover:border-white/40 px-3 py-1.5"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">사용 가이드</span>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
