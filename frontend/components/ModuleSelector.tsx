@@ -197,6 +197,29 @@ interface ModuleSelectorProps {
   onBack: () => void;
 }
 
+// ── Gemini API 에러 메시지 파싱 ─────────────────────────────────────
+function parseApiError(e: any): string {
+  const raw = e?.response?.data?.detail || e?.message || String(e) || '알 수 없는 오류';
+  const d   = typeof raw === 'string' ? raw : JSON.stringify(raw);
+
+  const isRateLimit = d.includes('429') || d.includes('RESOURCE_EXHAUSTED');
+  const isDaily     = /per.?day|daily|per_day/i.test(d);
+  const isRpm       = isRateLimit && !isDaily;
+
+  if (isRpm)
+    return '분당 요청 한도를 초과했습니다. 백엔드에서 자동 재시도 중입니다(약 1분 소요).';
+  if (isDaily)
+    return 'AI API 일일 사용량을 모두 소진했습니다. 내일 다시 시도해주세요.';
+  if (d.includes('fetch') || d.includes('network') || e?.code === 'ERR_NETWORK')
+    return '백엔드 서버에 연결할 수 없습니다. 서버 상태를 확인해주세요.';
+  if (d.includes('timeout') || d.includes('ECONNABORTED'))
+    return '분석 요청 시간이 초과되었습니다. 다시 시도해주세요.';
+
+  // 그 외: 원문 에러에서 핵심 메시지만 추출
+  const match = d.match(/모듈 분석 오류:\s*(.+)/);
+  return match ? match[1] : d;
+}
+
 export default function ModuleSelector({ company, endYear, onBack }: ModuleSelectorProps) {
   const modules = STATIC_MODULES;
 
@@ -227,20 +250,8 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
       setStatuses(s => ({ ...s, [moduleId]: 'done' }));
     } catch (e: any) {
       setStatuses(s => ({ ...s, [moduleId]: 'error' }));
-      // 에러 메시지 추출
-      const detail = e?.response?.data?.detail || e?.message || '알 수 없는 오류';
-      // 사용자 친화적 메시지 변환
-      let userMsg = detail;
-      if (typeof detail === 'string') {
-        if (detail.includes('429') || detail.includes('RESOURCE_EXHAUSTED') || detail.includes('quota')) {
-          userMsg = 'AI 분석 API 일일 사용량을 초과했습니다. 잠시 후 다시 시도해주세요.';
-        } else if (detail.includes('fetch') || detail.includes('network') || e?.code === 'ERR_NETWORK') {
-          userMsg = '백엔드 서버에 연결할 수 없습니다. 서버 상태를 확인해주세요.';
-          setBackendError(userMsg);
-        } else if (detail.includes('timeout') || detail.includes('ECONNABORTED')) {
-          userMsg = '분석 요청 시간이 초과되었습니다. 다시 시도해주세요.';
-        }
-      }
+      const userMsg = parseApiError(e);
+      if (userMsg.includes('서버에 연결할 수 없습니다')) setBackendError(userMsg);
       setModuleErrors(prev => ({ ...prev, [moduleId]: userMsg }));
     }
   };
@@ -289,7 +300,7 @@ export default function ModuleSelector({ company, endYear, onBack }: ModuleSelec
       }, 10_000);
     } catch (e: any) {
       setMetaStatus('error');
-      setMetaError(e.message ?? '투자심의 심화 분석 시작 실패');
+      setMetaError(parseApiError(e));
     }
   };
 

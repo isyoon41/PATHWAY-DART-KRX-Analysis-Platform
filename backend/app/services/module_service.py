@@ -537,11 +537,18 @@ class ModuleAnalysisService:
             except Exception as exc:
                 last_exc = exc
                 err_str  = str(exc)
-                # Rate limit 또는 서버 오류 → 재시도
-                if attempt < max_retries - 1 and any(
-                    kw in err_str for kw in ("429", "RESOURCE_EXHAUSTED", "503", "500")
-                ):
-                    wait_secs = (2 ** attempt) * 5  # 5s, 10s, 20s
+
+                is_rate_limit  = any(kw in err_str for kw in ("429", "RESOURCE_EXHAUSTED"))
+                is_server_err  = any(kw in err_str for kw in ("503", "500"))
+                is_daily_limit = any(kw in err_str.lower() for kw in ("per day", "daily", "per_day"))
+
+                if attempt < max_retries - 1 and (is_rate_limit or is_server_err):
+                    if is_rate_limit and not is_daily_limit:
+                        # RPM(분당) 초과 → 60초 대기 후 재시도
+                        wait_secs = 62
+                    else:
+                        # 서버 오류(503/500) → 지수 백오프
+                        wait_secs = (2 ** attempt) * 5  # 5s, 10s
                     await asyncio.sleep(wait_secs)
                 else:
                     raise exc
