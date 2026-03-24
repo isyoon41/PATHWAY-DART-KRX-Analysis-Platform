@@ -207,7 +207,7 @@ function parseApiError(e: any): string {
   const isRpm       = isRateLimit && !isDaily;
 
   if (isRpm)
-    return '분당 요청 한도를 초과했습니다. 백엔드에서 자동 재시도 중입니다(약 1분 소요).';
+    return '분당 요청 한도(RPM)를 초과했습니다. 1분 후 다시 시도해주세요.';
   if (isDaily)
     return 'AI API 일일 사용량을 모두 소진했습니다. 내일 다시 시도해주세요.';
   if (d.includes('fetch') || d.includes('network') || e?.code === 'ERR_NETWORK')

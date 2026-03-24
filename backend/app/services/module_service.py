@@ -544,12 +544,13 @@ class ModuleAnalysisService:
 
                 if attempt < max_retries - 1 and (is_rate_limit or is_server_err):
                     if is_rate_limit and not is_daily_limit:
-                        # RPM(분당) 초과 → 60초 대기 후 재시도
-                        wait_secs = 62
+                        # RPM(분당) 초과 — 재시도해도 대부분 실패하므로 즉시 raise
+                        # (HTTP 연결 유지 한계로 62s 대기 불가 → 프론트에서 수동 재시도 유도)
+                        raise exc
                     else:
                         # 서버 오류(503/500) → 지수 백오프
                         wait_secs = (2 ** attempt) * 5  # 5s, 10s
-                    await asyncio.sleep(wait_secs)
+                        await asyncio.sleep(wait_secs)
                 else:
                     raise exc
 
