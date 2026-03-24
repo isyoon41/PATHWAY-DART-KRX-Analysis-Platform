@@ -22,7 +22,10 @@ class Settings(BaseSettings):
 
     # Google Gemini
     google_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash-preview-04-17"
+    # 일반 모듈 (8개): 안정 모델, 무료 1,500 RPD
+    gemini_model: str = "gemini-2.0-flash"
+    # 투자심화 분석 전용: 고품질 모델, 하루 몇 번 사용
+    gemini_model_meta: str = "gemini-2.5-flash-preview-04-17"
 
     # CORS — 쉼표 구분으로 여러 origin 허용
     # 배포: ALLOWED_ORIGINS="https://pathwaypartners-dart-analysis-platf.vercel.app"

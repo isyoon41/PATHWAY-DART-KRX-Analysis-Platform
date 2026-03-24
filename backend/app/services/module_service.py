@@ -489,18 +489,22 @@ class ModuleAnalysisService:
             self.client = genai.Client(api_key=settings.google_api_key)
         else:
             self.client = None
-        self.model = settings.gemini_model
+        # 일반 모듈: gemini-2.0-flash (안정, 무료 1,500 RPD)
+        self.model      = settings.gemini_model
+        # 투자심화 분석: gemini-2.5-flash-preview (고품질, 무료 500 RPD)
+        self.model_meta = settings.gemini_model_meta
 
     def _call_gemini(
         self,
         system_prompt: str,
         user_prompt: str,
         max_tokens: int,
+        model: Optional[str] = None,
     ) -> str:
         if self.client is None:
             raise ValueError("GOOGLE_API_KEY가 설정되지 않았습니다.")
         response = self.client.models.generate_content(
-            model=self.model,
+            model=model or self.model,
             contents=user_prompt,
             config=genai_types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -516,17 +520,19 @@ class ModuleAnalysisService:
         user_prompt: str,
         max_tokens: int,
         max_retries: int = 3,
+        model: Optional[str] = None,
     ) -> str:
-        """개선 6: 세마포어(최대 3 병렬) + 지수 백오프 재시도"""
+        """세마포어(최대 3 병렬) + 지수 백오프 재시도 / 모델 선택 지원"""
         loop = asyncio.get_event_loop()
         last_exc: Exception = RuntimeError("Gemini 호출 실패")
+        _model = model or self.model
 
         for attempt in range(max_retries):
             try:
                 async with _GEMINI_SEMAPHORE:
                     return await loop.run_in_executor(
                         None,
-                        lambda: self._call_gemini(system_prompt, user_prompt, max_tokens),
+                        lambda: self._call_gemini(system_prompt, user_prompt, max_tokens, _model),
                     )
             except Exception as exc:
                 last_exc = exc
@@ -644,10 +650,11 @@ class ModuleAnalysisService:
                 + user_prompt
             )
 
-        # ── 5. Gemini 호출 (개선 6: 세마포어 + 재시도) ─────────────────
+        # ── 5. Gemini 호출 — 일반 모듈: gemini-2.0-flash ───────────────
         max_tokens = module_meta.get("max_tokens", 8192)
         raw_text   = await self._call_gemini_with_retry(
-            system_prompt, user_prompt, max_tokens
+            system_prompt, user_prompt, max_tokens,
+            model=self.model,
         )
 
         # ── 6. JSON 파싱 ────────────────────────────────────────────────
@@ -712,10 +719,11 @@ class ModuleAnalysisService:
             module_outputs=module_outputs,
         )
 
-        # 개선 6: 세마포어 + 재시도, 개선 8: 메타 전용 토큰 한도
+        # 투자심화 분석: gemini-2.5-flash-preview (고품질 추론 필요)
         raw_text    = await self._call_gemini_with_retry(
             system_prompt, user_prompt,
             max_tokens=MODULE_TOKENS["_meta"],
+            model=self.model_meta,
         )
         result_json = _parse_json_response(raw_text)
 
@@ -727,7 +735,7 @@ class ModuleAnalysisService:
             "report":        json.dumps(result_json, ensure_ascii=False, indent=2),
             "result":        result_json,
             "generated_at":  datetime.now().isoformat(),
-            "model":         self.model,
+            "model":         self.model_meta,
             "period":        f"{start_year}~{end_year}년",
             "modules_used":  list(module_outputs.keys()),
         }
