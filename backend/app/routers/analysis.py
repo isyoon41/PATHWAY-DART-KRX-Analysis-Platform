@@ -825,23 +825,63 @@ async def run_module_analysis(
             except Exception:
                 logger.debug("모듈 분석용 시장 데이터 조회 실패 (stock_code=%s)", stock_code)
 
-        # 일자별 주가 이력 — S11 포함 모듈 전체에 제공 (FDR/Yahoo)
+        # ── key_indicators 조회 + 자체 계산 폴백 ───────────────────
+        ki_raw: Dict = {}
+        try:
+            ki_raw = await dart_service.get_key_indicators(corp_code, str(base_year))
+        except Exception:
+            pass
+        def _safe_ki(r: Any) -> Optional[Dict]:
+            return r if not isinstance(r, Exception) and r.get("status") not in ("013", "020") else None
+
+        governance_data["key_indicators"] = _safe_ki(ki_raw)
+        if not governance_data["key_indicators"] or not governance_data["key_indicators"].get("list"):
+            fin_latest = financials_by_year.get(str(base_year), {})
+            if fin_latest and not fin_latest.get("error") and market_data and not market_data.get("error"):
+                calc_ki = _calc_key_indicators_fallback(fin_latest, market_data, str(base_year))
+                if calc_ki:
+                    governance_data["key_indicators"] = calc_ki
+                    logger.info(
+                        "모듈 key_indicators 자체 계산 (corp=%s, year=%s, items=%d)",
+                        corp_code, base_year, len(calc_ki["list"]),
+                    )
+
+        # 일자별 + 월별 주가 이력 ──────────────────────────────────
         stock_history: Dict = {}
+        stock_monthly: Dict = {}
+
         s11_modules = {
             "stock_price_movement_analysis", "stock_movement",
             "comprehensive_corporate_analysis", "comprehensive",
             "paid_in_capital_increase", "capital_increase",
             "preliminary_results", "preliminary",
         }
-        if stock_code and (real_id in s11_modules or module_id in s11_modules):
-            try:
-                hist_start = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
-                hist_end   = date.today().strftime("%Y-%m-%d")
-                stock_history = await krx_service.get_stock_history(
-                    stock_code, hist_start, hist_end
-                )
-            except Exception:
-                logger.debug("주가 이력 조회 실패 (stock_code=%s)", stock_code)
+        # 재무 모듈: 월별 주가 추이 추가 (PER·PBR·밸류에이션 맥락 제공)
+        monthly_modules = {
+            "key_financial_indicators", "key_financials",
+            "complete_financial_statements", "full_financials",
+            "comprehensive_corporate_analysis", "comprehensive",
+            "stock_price_movement_analysis", "stock_movement",
+        }
+
+        if stock_code:
+            # 일자별 이력 (S11 포함 모듈)
+            if real_id in s11_modules or module_id in s11_modules:
+                try:
+                    hist_start = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+                    hist_end   = date.today().strftime("%Y-%m-%d")
+                    stock_history = await krx_service.get_stock_history(
+                        stock_code, hist_start, hist_end
+                    )
+                except Exception:
+                    logger.debug("주가 이력 조회 실패 (stock_code=%s)", stock_code)
+
+            # 월별 집계 (재무 분석 모듈)
+            if real_id in monthly_modules or module_id in monthly_modules:
+                try:
+                    stock_monthly = await krx_service.get_stock_monthly(stock_code, months=24)
+                except Exception:
+                    logger.debug("월별 주가 조회 실패 (stock_code=%s)", stock_code)
 
         # ── 모듈 분석 실행 ───────────────────────────────────────────
         result = await module_service.run_module(
@@ -856,6 +896,7 @@ async def run_module_analysis(
             disc_list=disc_list,
             market_data=market_data,
             stock_history=stock_history,
+            stock_monthly=stock_monthly,
         )
 
         return result
@@ -1109,6 +1150,37 @@ async def run_incremental_module_analysis(
             except Exception:
                 logger.debug("증분 분석용 시장 데이터 조회 실패 (stock_code=%s)", stock_code)
 
+        # ── key_indicators 조회 + 자체 계산 폴백 ───────────────────
+        _ki_raw: Dict = {}
+        try:
+            _ki_raw = await dart_service.get_key_indicators(corp_code, str(base_year))
+        except Exception:
+            pass
+        def _safe_ki2(r: Any) -> Optional[Dict]:
+            return r if not isinstance(r, Exception) and r.get("status") not in ("013", "020") else None
+
+        governance_data["key_indicators"] = _safe_ki2(_ki_raw)
+        if not governance_data["key_indicators"] or not governance_data["key_indicators"].get("list"):
+            _fin_latest = financials_by_year.get(str(base_year), {})
+            if _fin_latest and not _fin_latest.get("error") and market_data and not market_data.get("error"):
+                _calc_ki = _calc_key_indicators_fallback(_fin_latest, market_data, str(base_year))
+                if _calc_ki:
+                    governance_data["key_indicators"] = _calc_ki
+
+        # ── 월별 주가 (재무 모듈에만) ───────────────────────────────
+        _monthly_modules = {
+            "key_financial_indicators", "key_financials",
+            "complete_financial_statements", "full_financials",
+            "comprehensive_corporate_analysis", "comprehensive",
+            "stock_price_movement_analysis", "stock_movement",
+        }
+        _stock_monthly: Dict = {}
+        if stock_code and (real_id in _monthly_modules or module_id in _monthly_modules):
+            try:
+                _stock_monthly = await krx_service.get_stock_monthly(stock_code, months=24)
+            except Exception:
+                logger.debug("증분 월별 주가 조회 실패 (stock_code=%s)", stock_code)
+
         # 증분: 캐시 무효화 후 prev_result 주입
         cache_service.invalidate(corp_code, real_id, str(base_year))
 
@@ -1124,6 +1196,7 @@ async def run_incremental_module_analysis(
             disc_list=disc_list,
             market_data=market_data,
             stock_history={},
+            stock_monthly=_stock_monthly,
             prev_result=body.prev_result,
             use_cache=False,        # 강제 재분석
         )

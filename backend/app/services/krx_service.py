@@ -405,6 +405,98 @@ class KRXService:
         except Exception as e:
             return {"error": str(e)}
 
+    async def get_stock_monthly(
+        self,
+        stock_code: str,
+        months: int = 24,
+    ) -> Dict:
+        """
+        월별 OHLCV 집계 데이터 (FDR/Yahoo 일별 → pandas 월별 resample)
+
+        반환 필드 (records 배열):
+          - month: "YYYY-MM"
+          - open: 월초 시가
+          - high: 월중 최고가
+          - low: 월중 최저가
+          - close: 월말 종가
+          - volume_k: 월 거래량 합계 (천 주)
+          - monthly_return_pct: 전월 대비 수익률 (%)
+
+        활용:
+          - 가격 추세·모멘텀 분석 (상승/하락 구간)
+          - 거래량 이상값 감지 (M&A·이벤트 신호)
+          - 계절성·섹터 사이클 파악
+        """
+        start_date = (datetime.now() - timedelta(days=months * 31 + 60)).strftime("%Y-%m-%d")
+        end_date   = datetime.now().strftime("%Y-%m-%d")
+
+        daily = await self.get_stock_history(stock_code, start_date, end_date)
+        records = daily.get("records")
+        if not records:
+            return {"error": "일별 주가 데이터 없음 — 월별 집계 불가", "stock_code": stock_code}
+
+        loop = asyncio.get_event_loop()
+
+        def _resample_monthly():
+            try:
+                import pandas as pd
+                df = pd.DataFrame(records)
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.set_index("date").sort_index()
+
+                # 월말 기준 resample (ME = Month End)
+                monthly = df.resample("ME").agg({
+                    "open":   "first",
+                    "high":   "max",
+                    "low":    "min",
+                    "close":  "last",
+                    "volume": "sum",
+                }).dropna(subset=["close"])
+
+                # 전월 대비 수익률
+                monthly["monthly_return_pct"] = (
+                    monthly["close"].pct_change() * 100
+                ).round(1)
+
+                result = []
+                for idx, row in monthly.iterrows():
+                    close_val  = int(row["close"])  if pd.notna(row["close"])  else None
+                    open_val   = int(row["open"])   if pd.notna(row["open"])   else None
+                    high_val   = int(row["high"])   if pd.notna(row["high"])   else None
+                    low_val    = int(row["low"])    if pd.notna(row["low"])    else None
+                    vol_k      = int(row["volume"] / 1000) if pd.notna(row["volume"]) else None
+                    ret_pct    = row["monthly_return_pct"] if pd.notna(row["monthly_return_pct"]) else None
+                    result.append({
+                        "month":              idx.strftime("%Y-%m"),
+                        "open":               open_val,
+                        "high":               high_val,
+                        "low":                low_val,
+                        "close":              close_val,
+                        "volume_k":           vol_k,
+                        "monthly_return_pct": ret_pct,
+                    })
+                return result[-months:]          # 최근 N개월만 반환
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            monthly_records = await loop.run_in_executor(executor, _resample_monthly)
+
+        if not monthly_records:
+            return {"error": "월별 resample 실패", "stock_code": stock_code}
+
+        provider = daily.get("_source", {}).get("provider", "FinanceDataReader")
+        return {
+            "stock_code": stock_code,
+            "months":     len(monthly_records),
+            "records":    monthly_records,
+            "_source": {
+                "provider":     f"{provider} (월별 집계)",
+                "base_source":  provider,
+                "retrieved_at": datetime.now().isoformat(),
+            },
+        }
+
     async def get_stock_code(self, company_name: str) -> List[Dict]:
         """기업명으로 종목코드 검색 (KRX 전용 — 현재 403)"""
         if not self.api_key:

@@ -327,6 +327,7 @@ def _assemble_section_strings(
     market_data: Dict,
     stock_history: Optional[Dict] = None,
     financials_quarterly: Optional[Dict[str, Any]] = None,  # 개선 7
+    stock_monthly: Optional[Dict] = None,                   # 월별 주가 집계
 ) -> Dict[str, str]:
     """S1~S11 각 섹션을 LLM용 텍스트로 변환"""
     s: Dict[str, str] = {}
@@ -352,6 +353,20 @@ def _assemble_section_strings(
     # 개선 7: S7에 분기 데이터 포함
     s["S7"] = _fmt_financials(financials_by_year, years, financials_quarterly)
 
+    # ── S7 말미에 주요 재무지표(EPS/BPS/PER/PBR) 주입 ─────────────────
+    ki = governance_data.get("key_indicators")
+    if ki and ki.get("list"):
+        is_calc    = ki.get("_calculated", False)
+        ki_label   = "주요 재무지표 (재무제표 기반 자체 계산)" if is_calc else "DART 주요 재무지표"
+        ki_lines   = "\n".join(
+            f"  {r.get('idx_nm','?')}: {r.get('idx_val','N/A')}"
+            f"{(' ' + r['idx_unit']) if r.get('idx_unit') else ''}"
+            f"{' ← 계산값' if r.get('_calc') else ''}"
+            for r in ki["list"][:10]
+        )
+        ki_note = "" if not is_calc else "\n  ※ DART API 미제공 → XBRL 재무제표+시장가격 직접 계산"
+        s["S7"] += f"\n\n[{ki_label}]\n{ki_lines}{ki_note}"
+
     # 개선 3: S8은 audit_opinion (감사의견 섹션)
     s["S8"] = fetched_sections.get("S8", {}).get("content") or "[감사의견 없음]"
 
@@ -368,6 +383,37 @@ def _assemble_section_strings(
             "[현재가 (KRX/네이버 금융)]\n"
             + json.dumps(market_data, ensure_ascii=False, indent=2)[:1500]
         )
+
+    # ── 월별 주가 집계 (FDR resample) — 추세·모멘텀·이벤트 분석 ─────
+    if stock_monthly and "error" not in stock_monthly:
+        m_records = stock_monthly.get("records", [])
+        if m_records:
+            m_provider = stock_monthly.get("_source", {}).get("provider", "FDR 월별 집계")
+            header     = (
+                f"[월별 주가 ({m_provider}) | "
+                f"최근 {len(m_records)}개월]\n"
+                f"  월        시가      종가      고가      저가    거래량(천주)  월간수익률"
+            )
+            m_lines = []
+            for r in m_records:
+                cl  = r.get("close")
+                op  = r.get("open")
+                hi  = r.get("high")
+                lo  = r.get("low")
+                vk  = r.get("volume_k")
+                ret = r.get("monthly_return_pct")
+                ret_str = f"{ret:+.1f}%" if ret is not None else "  N/A"
+                if cl:
+                    m_lines.append(
+                        f"  {r['month']}  "
+                        f"{op:>8,}  {cl:>8,}  {hi:>8,}  {lo:>8,}  "
+                        f"{vk:>10,}천주  {ret_str:>7}"
+                        if op and hi and lo and vk else
+                        f"  {r['month']}  종가:{cl:>8,}  월간수익률:{ret_str}"
+                    )
+            if m_lines:
+                s11_parts.append(header + "\n" + "\n".join(m_lines))
+
     if stock_history and "error" not in stock_history:
         records = stock_history.get("records", [])
         if records:
@@ -583,8 +629,9 @@ class ModuleAnalysisService:
         disc_list: List[Dict],
         market_data: Dict,
         stock_history: Optional[Dict] = None,
-        prev_result: Optional[Dict] = None,   # 개선 9: 증분 분석용
-        use_cache: bool = True,               # 개선 5: 캐시 활성화 여부
+        stock_monthly: Optional[Dict] = None,   # 월별 주가 집계 (FDR resample)
+        prev_result: Optional[Dict] = None,      # 개선 9: 증분 분석용
+        use_cache: bool = True,                  # 개선 5: 캐시 활성화 여부
     ) -> Dict[str, Any]:
         """
         단일 모듈 분석 — VC/PE 프롬프트 팩 v2.1
@@ -631,6 +678,7 @@ class ModuleAnalysisService:
             market_data=market_data,
             stock_history=stock_history,
             financials_quarterly=financials_quarterly,
+            stock_monthly=stock_monthly,
         )
 
         # ── 3. 시간 정보 ────────────────────────────────────────────────
