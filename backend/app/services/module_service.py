@@ -486,7 +486,10 @@ def _parse_json_response(text: str) -> Dict:
 class ModuleAnalysisService:
     def __init__(self):
         if settings.google_api_key:
-            self.client = genai.Client(api_key=settings.google_api_key)
+            self.client = genai.Client(
+                api_key=settings.google_api_key,
+                http_options={"api_version": "v1"},
+            )
         else:
             self.client = None
         # 일반 모듈: gemini-2.0-flash (안정, 무료 1,500 RPD)
