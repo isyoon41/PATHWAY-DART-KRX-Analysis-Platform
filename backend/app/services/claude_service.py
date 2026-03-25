@@ -276,15 +276,21 @@ def _build_governance_context(governance_data: Dict[str, Any]) -> str:
         af_names = ", ".join([r.get("affi_corp_nm", "") for r in rows[:15]])
         parts.append(f"[계열회사 현황]\n  총 {len(rows)}개사: {af_names}")
 
-    # 주요 재무지표 (DART 사전계산)
+    # 주요 재무지표 (DART 사전계산 또는 자체 계산 폴백)
     ki = governance_data.get("key_indicators")
     if ki and ki.get("list"):
         rows = ki["list"][:10]
         ki_lines = "\n".join([
-            f"  - {r.get('idx_nm', 'N/A')}: {r.get('idx_val', 'N/A')}"
+            f"  - {r.get('idx_nm', 'N/A')}: "
+            f"{r.get('idx_val', 'N/A')}"
+            f"{(' ' + r['idx_unit']) if r.get('idx_unit') else ''}"
+            f"{' (계산값)' if r.get('_calc') else ''}"
             for r in rows
         ])
-        parts.append(f"[DART 주요 재무지표]\n{ki_lines}")
+        # DART 원본 vs 자체 계산 구분 표시
+        is_calc = ki.get("_calculated", False)
+        section_title = "[주요 재무지표 (재무제표 기반 자체 계산)]" if is_calc else "[DART 주요 재무지표]"
+        parts.append(f"{section_title}\n{ki_lines}")
 
     return "\n\n".join(parts) if parts else "[지배구조 데이터 없음]"
 

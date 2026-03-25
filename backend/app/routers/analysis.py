@@ -19,6 +19,117 @@ from config import settings
 logger = logging.getLogger("pathway.analysis")
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 주요 재무지표 자체 계산 폴백
+# DART fnlttCmpnyIndctr API가 데이터를 제공하지 않을 때
+# 재무제표(structure_financial_data 결과) + 시장 데이터로 직접 계산
+# ══════════════════════════════════════════════════════════════════════
+
+def _parse_market_num(s: Any) -> Optional[float]:
+    """시장 데이터 숫자 문자열 파싱 (쉼표 제거, None/N/A 처리)"""
+    if s is None or s == "N/A" or s == "":
+        return None
+    try:
+        return float(str(s).replace(",", "").replace(" ", ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def _calc_key_indicators_fallback(
+    financials: Dict,
+    market_data: Dict,
+    year: str,
+) -> Optional[Dict]:
+    """
+    DART 주요 재무지표 API 실패 시 자체 계산 (fnlttCmpnyIndctr 동일 구조 반환)
+
+    계산 항목:
+      - EPS  = 당기순이익(원) ÷ 발행주식수
+      - BPS  = 자본총계(원) ÷ 발행주식수
+      - PER  = 현재주가 ÷ EPS
+      - PBR  = 현재주가 ÷ BPS
+      - ROE  = 당기순이익 ÷ 자본총계 × 100
+      - ROA  = 당기순이익 ÷ 자산총계 × 100
+
+    발행주식수 = 네이버 시가총액 ÷ 현재주가 역산 (FDR/Yahoo 폴백 시 생략)
+    금액 단위: financial_parser 출력은 백만원 → 원 환산 시 × 1,000,000
+    """
+    try:
+        is_curr = financials.get("income_statement", {}).get("current", {})
+        bs_curr = financials.get("balance_sheet",    {}).get("current", {})
+
+        net_income_m   = is_curr.get("net_income")    # 백만원
+        total_equity_m = bs_curr.get("total_equity")  # 백만원
+        total_assets_m = bs_curr.get("total_assets")  # 백만원
+
+        # 최소한 순이익 + 자본총계는 있어야 ROE 계산 가능
+        if net_income_m is None or total_equity_m is None:
+            return None
+
+        items: List[Dict] = []
+
+        # ── 주식수 역산 (시가총액 ÷ 현재주가) ───────────────────────────
+        current_price = _parse_market_num(market_data.get("current_price"))
+        market_cap    = _parse_market_num(market_data.get("market_cap"))
+
+        shares: Optional[float] = None
+        if market_cap and current_price and current_price > 0:
+            shares = market_cap / current_price
+
+        # ── 주당 지표 (주식수 있을 때만) ───────────────────────────────
+        if shares and shares > 0:
+            net_income_won   = net_income_m   * 1_000_000
+            total_equity_won = total_equity_m * 1_000_000
+
+            eps = net_income_won   / shares
+            bps = total_equity_won / shares
+
+            items.append({"idx_nm": "EPS", "idx_val": f"{eps:,.0f}", "idx_unit": "원",
+                          "_calc": True, "_note": "당기순이익÷발행주식수(시가총액역산)"})
+            items.append({"idx_nm": "BPS", "idx_val": f"{bps:,.0f}", "idx_unit": "원",
+                          "_calc": True, "_note": "자본총계÷발행주식수"})
+
+            if current_price and eps != 0:
+                per = current_price / eps
+                items.append({"idx_nm": "PER", "idx_val": f"{per:.1f}", "idx_unit": "배",
+                              "_calc": True, "_note": "현재주가÷EPS"})
+
+            if bps > 0:
+                pbr = current_price / bps if current_price else None
+                if pbr:
+                    items.append({"idx_nm": "PBR", "idx_val": f"{pbr:.2f}", "idx_unit": "배",
+                                  "_calc": True, "_note": "현재주가÷BPS"})
+
+        # ── 수익성 비율 (주식수 불필요) ─────────────────────────────────
+        if total_equity_m and total_equity_m != 0:
+            roe = net_income_m / total_equity_m * 100
+            items.append({"idx_nm": "ROE", "idx_val": f"{roe:.1f}", "idx_unit": "%",
+                          "_calc": True, "_note": "당기순이익÷자본총계"})
+
+        if total_assets_m and total_assets_m != 0:
+            roa = net_income_m / total_assets_m * 100
+            items.append({"idx_nm": "ROA", "idx_val": f"{roa:.1f}", "idx_unit": "%",
+                          "_calc": True, "_note": "당기순이익÷자산총계"})
+
+        if not items:
+            return None
+
+        return {
+            "status": "000",
+            "list":   items,
+            "_calculated": True,   # 자체 계산 플래그 (DART API 원본과 구별)
+            "_source": {
+                "provider":     "자체 계산 (DART 재무제표 + 네이버/FDR 시장 데이터)",
+                "business_year": year,
+                "note":         "DART fnlttCmpnyIndctr API 미제공 → 직접 계산값",
+                "retrieved_at": datetime.now().isoformat(),
+            },
+        }
+    except Exception as exc:
+        logger.debug("key_indicators 자체 계산 실패: %s", exc, exc_info=True)
+        return None
+
+
 # ─── 요청 바디 모델 ──────────────────────────────────────────────────
 class IncrementalModuleRequest(BaseModel):
     end_year:    str = ""
@@ -463,6 +574,20 @@ async def get_ai_report(
                 market_data = await krx_service.get_stock_price(stock_code)
             except Exception:
                 logger.debug("시장 데이터 조회 실패 (stock_code=%s)", stock_code, exc_info=True)
+
+        # ── 4.1단계: key_indicators 자체 계산 폴백 ──────────────────────
+        # DART fnlttCmpnyIndctr가 데이터 없을 때 재무제표 + 시장 데이터로 계산
+        ki = governance_data.get("key_indicators")
+        if not ki or not ki.get("list"):
+            fin_latest = financials_by_year.get(latest_year, {})
+            if fin_latest and not fin_latest.get("error") and market_data and not market_data.get("error"):
+                calc_ki = _calc_key_indicators_fallback(fin_latest, market_data, latest_year)
+                if calc_ki:
+                    governance_data["key_indicators"] = calc_ki
+                    logger.info(
+                        "key_indicators 자체 계산 적용 (corp=%s, year=%s, items=%d)",
+                        corp_code, latest_year, len(calc_ki["list"]),
+                    )
 
         # ── 4.5단계: 사업보고서 원문 섹션 분해 ─────────────────────────────
         # DART에서 사업보고서를 직접 검색(최대 3년 소급)한 뒤 HTML 다운로드 → 섹션 분해
