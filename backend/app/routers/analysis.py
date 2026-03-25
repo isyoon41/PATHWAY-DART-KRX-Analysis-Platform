@@ -33,6 +33,15 @@ async def get_api_usage():
     return usage_tracker.get_stats()
 
 
+@router.get("/config")
+async def get_config():
+    """현재 설정된 Gemini 모델 반환 (배포 진단용)"""
+    return {
+        "gemini_model": settings.gemini_model,
+        "gemini_model_meta": settings.gemini_model_meta,
+    }
+
+
 @router.get("/{corp_code}/comprehensive")
 async def get_comprehensive_analysis(
     corp_code: str,
