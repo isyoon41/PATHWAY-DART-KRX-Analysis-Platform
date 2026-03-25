@@ -12,6 +12,7 @@ from app.services.dart_parser import create_parser, analyzer as section_analyzer
 from app.services.financial_parser import structure_financial_data
 from app.services.claude_service import claude_service
 from app.services.module_service import module_service, MODULES, MODULE_ID_ALIAS
+from app.services.usage_tracker import usage_tracker
 from app.services import job_service, cache_service
 from config import settings
 
@@ -24,6 +25,12 @@ class IncrementalModuleRequest(BaseModel):
     prev_result: Optional[Dict[str, Any]] = None
 
 router = APIRouter()
+
+
+@router.get("/usage")
+async def get_api_usage():
+    """오늘 Gemini API 사용량 통계 반환"""
+    return usage_tracker.get_stats()
 
 
 @router.get("/{corp_code}/comprehensive")

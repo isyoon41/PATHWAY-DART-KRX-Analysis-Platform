@@ -503,8 +503,9 @@ class ModuleAnalysisService:
     ) -> str:
         if self.client is None:
             raise ValueError("GOOGLE_API_KEY가 설정되지 않았습니다.")
+        _model = model or self.model
         response = self.client.models.generate_content(
-            model=model or self.model,
+            model=_model,
             contents=user_prompt,
             config=genai_types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -512,6 +513,18 @@ class ModuleAnalysisService:
                 temperature=0.2,
             ),
         )
+        # 토큰 사용량 기록
+        try:
+            from app.services.usage_tracker import usage_tracker
+            meta = getattr(response, "usage_metadata", None)
+            if meta:
+                usage_tracker.record(
+                    model=_model,
+                    input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+                    output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
+                )
+        except Exception:
+            pass
         return response.text
 
     async def _call_gemini_with_retry(

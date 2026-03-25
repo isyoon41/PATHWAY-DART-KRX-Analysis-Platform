@@ -10,6 +10,7 @@ import CompanySearch from '@/components/CompanySearch';
 import LoadingProgress from '@/components/LoadingProgress';
 import AnalysisReport from '@/components/AnalysisReport';
 import ModuleSelector from '@/components/ModuleSelector';
+import UsageIndicator from '@/components/UsageIndicator';
 import {
   CompanySearchResult,
   AnalysisOptions,
@@ -347,6 +348,7 @@ export default function Home() {
                   </span>
                 </div>
               )}
+              <UsageIndicator />
               <Link
                 href="/faq"
                 className="flex items-center gap-1.5 text-[12px] text-white/60 hover:text-white transition-colors border border-white/20 hover:border-white/40 px-3 py-1.5"
