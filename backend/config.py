@@ -22,8 +22,8 @@ class Settings(BaseSettings):
 
     # Google Gemini
     google_api_key: str = ""
-    # 일반 모듈 (8개): 안정 모델, 무료 1,500 RPD
-    gemini_model: str = "gemini-2.0-flash"
+    # 일반 모듈 (8개): 유료 키 신규 사용자 가용 모델, RPM 1,000
+    gemini_model: str = "gemini-2.5-flash"
     # 투자심화 분석 전용: 고품질 모델, 하루 몇 번 사용
     gemini_model_meta: str = "gemini-2.5-flash-preview-04-17"
 
