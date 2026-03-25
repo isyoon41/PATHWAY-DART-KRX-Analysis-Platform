@@ -130,7 +130,7 @@ function QuestionsPanel({ questions }: { questions: string[] }) {
           {questions.map((q, i) => (
             <li key={i} className="px-4 py-2 flex items-start gap-2 text-[12px] text-[#475569]">
               <span className="text-amber-500 font-bold flex-shrink-0">Q{i + 1}.</span>
-              {q}
+              {typeof q === 'string' ? q : (q as any).point || ''}
             </li>
           ))}
         </ul>
@@ -248,7 +248,7 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
               {data.key_facts.map((f, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-[12px] text-[#334155]">
                   <Info className="w-3.5 h-3.5 mt-0.5 text-[#2E75B6] flex-shrink-0" />
-                  {f}
+                  {typeof f === 'string' ? f : (f as any).claim || (f as any).data_point || ''}
                 </li>
               ))}
             </ul>
