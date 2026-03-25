@@ -1,5 +1,8 @@
 """
 일별 Gemini API 사용량 추적기 (메모리 기반, 자정 자동 리셋)
+Gemini 무료 티어 쿼터는 미국 태평양 시간(PT) 자정 기준으로 리셋됩니다.
+- PDT (3월 둘째 일요일 ~ 11월 첫째 일요일): UTC-7 → 한국시간 16:00
+- PST (그 외): UTC-8 → 한국시간 17:00
 """
 import threading
 from datetime import date, datetime, timezone, timedelta
@@ -10,8 +13,24 @@ LIMITS = {
     "flash_meta": {"requests": 500,  "label": "gemini-2.5-flash-preview"},
 }
 
-# 한국 시간 자정 기준 리셋 (UTC+9)
+# 한국 시간 (표시용)
 KST = timezone(timedelta(hours=9))
+
+
+def _pacific_tz() -> tuple[timezone, str]:
+    """현재 날짜 기준 미국 태평양 시간대(PDT/PST) 반환"""
+    now_utc = datetime.now(timezone.utc)
+    year = now_utc.year
+    # 미국 DST 시작: 3월 둘째 일요일
+    march_1 = date(year, 3, 1)
+    dst_start = march_1 + timedelta(days=(6 - march_1.weekday()) % 7 + 7)
+    # 미국 DST 종료: 11월 첫째 일요일
+    nov_1 = date(year, 11, 1)
+    dst_end = nov_1 + timedelta(days=(6 - nov_1.weekday()) % 7)
+    today = now_utc.date()
+    if dst_start <= today < dst_end:
+        return timezone(timedelta(hours=-7)), "PDT"
+    return timezone(timedelta(hours=-8)), "PST"
 
 
 class DailyUsageTracker:
@@ -23,7 +42,8 @@ class DailyUsageTracker:
         self._out_tokens  = {"flash": 0, "flash_meta": 0}
 
     def _today(self) -> str:
-        return datetime.now(KST).strftime("%Y-%m-%d")
+        pt, _ = _pacific_tz()
+        return datetime.now(pt).strftime("%Y-%m-%d")
 
     def _check_reset(self):
         today = self._today()
@@ -50,16 +70,21 @@ class DailyUsageTracker:
     def get_stats(self) -> dict:
         with self._lock:
             self._check_reset()
-            now_kst = datetime.now(KST)
-            # 다음 자정까지 남은 시간
-            tomorrow = (now_kst + timedelta(days=1)).replace(
+            pt, tz_label = _pacific_tz()
+            now_pt = datetime.now(pt)
+            # 다음 태평양 시간 자정까지 남은 초
+            tomorrow_pt = (now_pt + timedelta(days=1)).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
-            seconds_to_reset = int((tomorrow - now_kst).total_seconds())
+            seconds_to_reset = int((tomorrow_pt - now_pt).total_seconds())
+            # KST로 리셋 시각 표시
+            reset_kst = tomorrow_pt.astimezone(KST)
 
             result = {
-                "date":            self._date,
+                "date":             self._date,
                 "reset_in_seconds": seconds_to_reset,
+                "reset_time_kst":   reset_kst.strftime("%H:%M"),
+                "reset_tz":         tz_label,
                 "models": {}
             }
             for key, meta in LIMITS.items():

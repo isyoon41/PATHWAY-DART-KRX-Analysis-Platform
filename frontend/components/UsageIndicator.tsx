@@ -16,6 +16,8 @@ interface ModelUsage {
 interface UsageData {
   date: string;
   reset_in_seconds: number;
+  reset_time_kst?: string;
+  reset_tz?: string;
   models: {
     flash: ModelUsage;
     flash_meta: ModelUsage;
@@ -179,7 +181,12 @@ export default function UsageIndicator() {
                   <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
                   </svg>
-                  <span>{formatResetTime(data.reset_in_seconds)} (KST 자정)</span>
+                  <span>
+                    {formatResetTime(data.reset_in_seconds)}
+                    {data.reset_time_kst
+                      ? ` (KST ${data.reset_time_kst} · ${data.reset_tz ?? 'PT'} 자정)`
+                      : ' (PT 자정)'}
+                  </span>
                 </div>
               </>
             ) : (
