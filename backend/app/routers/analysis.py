@@ -36,9 +36,13 @@ async def get_api_usage():
 @router.get("/config")
 async def get_config():
     """현재 설정된 Gemini 모델 반환 (배포 진단용)"""
+    import os
     return {
         "gemini_model": settings.gemini_model,
         "gemini_model_meta": settings.gemini_model_meta,
+        "railway_service": os.environ.get("RAILWAY_SERVICE_NAME", "unknown"),
+        "railway_public_domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN", "unknown"),
+        "railway_deployment_id": os.environ.get("RAILWAY_DEPLOYMENT_ID", "unknown")[:12],
     }
 
 
