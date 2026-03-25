@@ -511,6 +511,7 @@ class ModuleAnalysisService:
                 system_instruction=system_prompt,
                 max_output_tokens=max_tokens,
                 temperature=0.2,
+                response_mime_type="application/json",
             ),
         )
         # 토큰 사용량 기록
@@ -673,13 +674,20 @@ class ModuleAnalysisService:
 
         # ── 5. Gemini 호출 — 일반 모듈: gemini-2.5-flash ───────────────
         max_tokens = module_meta.get("max_tokens", 8192)
-        raw_text   = await self._call_gemini_with_retry(
-            system_prompt, user_prompt, max_tokens,
-            model=self.model,
-        )
-
-        # ── 6. JSON 파싱 ────────────────────────────────────────────────
-        result_json = _parse_json_response(raw_text)
+        result_json: Dict = {}
+        for _parse_attempt in range(3):
+            raw_text = await self._call_gemini_with_retry(
+                system_prompt, user_prompt, max_tokens,
+                model=self.model,
+            )
+            # ── 6. JSON 파싱 ────────────────────────────────────────────
+            result_json = _parse_json_response(raw_text)
+            if "_parse_error" not in result_json:
+                break  # 파싱 성공
+            import logging as _log_mod
+            _log_mod.getLogger("pathway.module_service").warning(
+                "JSON 파싱 실패 (attempt %d/3) — 재시도", _parse_attempt + 1
+            )
 
         corp_name  = company_info.get("corp_name", corp_code)
         period_str = f"{start_year}~{end_year}년"
