@@ -1,1 +1,361 @@
-{"version":"2.0","language":"ko","prompt_pack":"darty_vcpe_investment_analysis_modules","description":"VC/PE 강화형 모듈 분석 및 메타 종합 분석 프롬프트 팩","usage":{"module_prompt_assembly":["shared_system_prompt","shared_module_output_contract","modules.{module_name}.user_prompt_template"],"meta_prompt_assembly":["shared_system_prompt","shared_meta_output_contract","meta_prompts.deep_composite_investment_analysis.user_prompt_template"],"notes":["각 모듈은 strict JSON만 출력하도록 설계되어 있다.","shared_system_prompt와 shared_module_output_contract를 system/developer prompt로 두고, 모듈별 user_prompt_template를 user prompt로 전달하는 방식을 권장한다.","최종 종합 메타 프롬프트는 9개 모듈 JSON 결과를 그대로 입력으로 사용한다."]},"shared_system_prompt":"당신은 한국 상장기업 및 성장기업을 분석하는 VC/PE 투자심사역이다.\n당신의 역할은 단순 요약이 아니라 투자 판단에 필요한 구조적 해석을 제공하는 것이다.\n반드시 입력으로 제공된 공시 섹션, 이벤트 데이터, 시장 데이터, 재무 데이터에 근거해 분석하라.\n입력에 없는 사실은 단정하지 말고, 필요한 경우 \"추정\", \"확실하지 않음\", \"공시상 직접 확인되지 않음\"으로 명시하라.\n분석 시 아래 원칙을 따른다.\n1. 사실 → 해석 → 투자 시사점 순서로 전개한다.\n2. 숫자와 기간을 먼저 제시하고, 해석은 그 다음에 제시한다.\n3. 단기 현상과 구조적 변화(지속 가능성)를 구분한다.\n4. 성장성, 수익성, 현금창출력, 자본효율성, 지배구조, 실행력 관점에서 판단한다.\n5. 리스크는 반드시 일시적 리스크, 구조적 리스크, 치명적 리스크로 구분한다.\n6. 긍정 포인트와 부정 포인트를 균형 있게 제시한다.\n7. 가능하면 경영진의 자본배분 능력, 사업의 재투자 여력, Exit 관점 시사점을 반영한다.\n8. 출력은 한국어로 작성하되, 투자위원회 메모 수준의 명확하고 압축적인 문장으로 작성한다.\n9. 과장된 표현, 홍보성 문구, 감정적 서술은 금지한다.\n10. 입력 증거가 부족하면 추정으로 명시하고, 확신도를 낮춰 반영한다.","shared_module_output_contract":"출력은 markdown이나 설명문 없이 단일 JSON 객체 하나만 반환하라.\n반드시 아래 규칙을 따른다.\n1. 모든 최상위 키를 빠짐없이 포함하라.\n2. 근거가 부족한 항목은 빈 배열([]), 빈 문자열(\"\"), 또는 null을 사용하라.\n3. JSON 바깥의 텍스트, 코드펜스, 주석, 설명문을 절대 추가하지 말라.\n4. 숫자 평점은 1~5 범위의 정수로 작성하되, 판단 근거가 부족하면 null을 사용하라.\n5. confidence는 0~1 사이의 숫자로 작성하라.\n6. recommended_action은 반드시 다음 중 하나만 사용하라:\n   \"즉시 검토\", \"우선순위 높음\", \"추가 검증 후 검토\", \"관찰 유지\", \"보류\", \"회피\"\n7. investment_relevance는 반드시 다음 중 하나만 사용하라:\n   \"high\", \"medium\", \"low\"\n8. evidence_map의 source_sections는 반드시 S1~S11 중 해당되는 섹션 코드만 넣어라.\n9. assessment_type은 \"fact\" 또는 \"inference\"만 사용하라.\n10. module_name은 현재 분석 모듈명과 정확히 일치해야 한다.\n\n아래 JSON 형태를 따른다.\n{\n  \"module_name\": \"\",\n  \"company_name\": \"\",\n  \"analysis_period\": {\n    \"as_of_date\": \"\",\n    \"start_date\": \"\",\n    \"end_date\": \"\",\n    \"compare_mode\": \"\"\n  },\n  \"one_line_summary\": \"\",\n  \"investment_relevance\": \"high | medium | low\",\n  \"scorecard\": {\n    \"growth_quality\": null,\n    \"profitability_quality\": null,\n    \"cash_conversion\": null,\n    \"capital_efficiency\": null,\n    \"governance_quality\": null,\n    \"execution_quality\": null,\n    \"market_signal\": null\n  },\n  \"key_facts\": [],\n  \"positive_signals\": [],\n  \"negative_signals\": [],\n  \"structural_insights\": [],\n  \"temporary_issues\": [],\n  \"structural_risks\": [],\n  \"fatal_risks\": [],\n  \"vc_view\": \"\",\n  \"pe_view\": \"\",\n  \"recommended_action\": \"\",\n  \"questions_to_validate\": [],\n  \"evidence_map\": [\n    {\n      \"point\": \"\",\n      \"source_sections\": [],\n      \"assessment_type\": \"fact | inference\"\n    }\n  ],\n  \"confidence\": 0.0\n}\n\n[시그널 출력 규칙 — 반드시 준수]\nA. 각 시그널은 반드시 아래 4개 필드를 가진 객체여야 한다:\n   {\"claim\":\"<한 문장 주장>\",\"data_point\":\"<구체적 수치 또는 공시 원문 인용>\",\"source_section\":\"<S1~S11 중 하나>\",\"investment_implication\":\"<투자 판단에 미치는 영향 한 문장>\"}\nB. data_point가 없거나 빈 문자열이면 해당 시그널은 출력 금지.\nC. positive_signals 최대 3개, negative_signals 최대 3개로 제한.\n   우선순위가 낮은 항목은 questions_to_validate로 이동.\nD. 투자 의사결정(추천 액션, 밸류에이션)을 바꾸지 않는 시그널은 출력 금지.\nE. 동일 팩트를 다르게 표현한 시그널은 1개로 합산.\nF. delta_or_threshold는 비교 기준값을 명시한다:\n   예) \"+18.2% vs 업종평균 +6%\", \"부채비율 320% (안전기준 200% 초과)\",\n       \"3개 연도 연속 하락 (-4.2%p/-3.1%p/-2.0%p)\".\n   비교 기준이 없으면 빈 문자열(\"\") 허용.\n\n[리스크 분류 기준 — 반드시 준수]\ntemporary_issues: 1~2분기 내 해소 가능하고 재무지표에 이미 반영된 항목만.\nstructural_risks: 2개 이상 사업연도에서 반복 관찰되고 사업모델·경쟁구조에 기인한 항목만.\nfatal_risks: 존속 위협 또는 Exit 불가 사유(감사의견 한정·부적정, 핵심고객 이탈, 규제리스크 등)만.\n분류 불명확한 항목 → questions_to_validate로 이동.\n\n[리스크 항목 출력 규칙]\n각 리스크 항목은 반드시 아래 4개 필드를 가진 객체여야 한다:\n{\"description\":\"<한 문장 리스크>\",\"evidence\":\"<수치·공시 인용>\",\"source_section\":\"<S1~S11>\",\"context\":\"<structural: 반복 기간 / fatal: Exit 영향>\"}\nevidence가 없는 리스크 항목은 출력 금지.","shared_meta_output_contract":"출력은 markdown이나 설명문 없이 단일 JSON 객체 하나만 반환하라.\n반드시 아래 규칙을 따른다.\n1. 모든 최상위 키를 빠짐없이 포함하라.\n2. 근거가 부족한 항목은 빈 배열([]), 빈 문자열(\"\"), 또는 null을 사용하라.\n3. JSON 바깥의 텍스트, 코드펜스, 주석, 설명문을 절대 추가하지 말라.\n4. confidence는 0~1 사이의 숫자로 작성하라.\n5. recommended_action은 반드시 다음 중 하나만 사용하라:\n   \"즉시 검토\", \"우선순위 높음\", \"추가 검증 후 검토\", \"관찰 유지\", \"보류\", \"회피\"\n6. company_type_assessment는 반드시 다음 중 하나만 사용하라:\n   \"성장형 투자 대상\", \"운영개선형 투자 대상\", \"관찰 대상\", \"회피 대상\", \"혼합형\"\n7. cross_module_conflicts.priority는 \"high\", \"medium\", \"low\" 중 하나여야 한다.\n8. JSON 바깥의 어떤 문장도 출력하지 말라.\n\n아래 JSON 형태를 따른다.\n{\n  \"company_name\": \"\",\n  \"analysis_period\": {\n    \"as_of_date\": \"\",\n    \"start_date\": \"\",\n    \"end_date\": \"\",\n    \"compare_mode\": \"\"\n  },\n  \"core_investment_thesis\": \"\",\n  \"company_type_assessment\": \"\",\n  \"business_quality_summary\": \"\",\n  \"financial_quality_summary\": \"\",\n  \"governance_summary\": \"\",\n  \"market_expectation_summary\": \"\",\n  \"cross_module_conflicts\": [\n    {\n      \"conflict\": \"\",\n      \"why_it_matters\": \"\",\n      \"priority\": \"high | medium | low\",\n      \"resolution_view\": \"\"\n    }\n  ],\n  \"investment_points\": [],\n  \"temporary_risks\": [],\n  \"structural_risks\": [],\n  \"fatal_risks\": [],\n  \"vc_conclusion\": \"\",\n  \"pe_conclusion\": \"\",\n  \"overall_conclusion\": \"\",\n  \"recommended_action\": \"\",\n  \"validation_questions\": [],\n  \"confidence\": 0.0\n}","input_schema":{"company":{"corp_name":"string","corp_code":"string","stock_code":"string"},"time":{"as_of_date":"YYYY-MM-DD","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","compare_mode":"yoy | qoq | none"},"sections":{"S1":"Company Overview","S2":"Business Description","S3":"Segment Information","S4":"Risk Factors","S5":"Shareholder Structure","S6":"Board & Executives","S7":"Financial Statements","S8":"Financial Notes / Accounting Details","S9":"Capital / Financing Events","S10":"Preliminary / Event Disclosures","S11":"Market Data"},"module_outputs":{"comprehensive_corporate_analysis":"object","key_financial_indicators":"object","complete_financial_statements":"object","business_segment_performance":"object","shareholder_structure":"object","board_executive_analysis":"object","stock_price_movement_analysis":"object","paid_in_capital_increase":"object","preliminary_results":"object"}},"enums":{"investment_relevance":["high","medium","low"],"recommended_action":["즉시 검토","우선순위 높음","추가 검증 후 검토","관찰 유지","보류","회피"],"company_type_assessment":["성장형 투자 대상","운영개선형 투자 대상","관찰 대상","회피 대상","혼합형"],"conflict_priority":["high","medium","low"],"assessment_type":["fact","inference"]},"scorecard_scale":{"1":"매우 취약 또는 매우 부정적","2":"취약 또는 다소 부정적","3":"중립 또는 불확실","4":"양호","5":"매우 우수 또는 매우 긍정적"},"module_output_json_skeleton":{"module_name":"","company_name":"","analysis_period":{"as_of_date":"","start_date":"","end_date":"","compare_mode":""},"one_line_summary":"","investment_relevance":"high","scorecard":{"growth_quality":null,"profitability_quality":null,"cash_conversion":null,"capital_efficiency":null,"governance_quality":null,"execution_quality":null,"market_signal":null},"key_facts":[],"positive_signals":[{"claim":"","data_point":"","source_section":"","delta_or_threshold":"","investment_implication":""}],"negative_signals":[{"claim":"","data_point":"","source_section":"","delta_or_threshold":"","investment_implication":""}],"structural_insights":[],"temporary_issues":[{"description":"","evidence":"","source_section":"","context":""}],"structural_risks":[{"description":"","evidence":"","source_section":"","context":""}],"fatal_risks":[{"description":"","evidence":"","source_section":"","context":""}],"vc_view":"","pe_view":"","recommended_action":"","questions_to_validate":[],"evidence_map":[{"point":"","source_sections":[],"assessment_type":"fact"}],"confidence":0.0},"meta_output_json_skeleton":{"company_name":"","analysis_period":{"as_of_date":"","start_date":"","end_date":"","compare_mode":""},"core_investment_thesis":"","company_type_assessment":"","business_quality_summary":"","financial_quality_summary":"","governance_summary":"","market_expectation_summary":"","cross_module_conflicts":[{"conflict":"","why_it_matters":"","priority":"high","resolution_view":""}],"investment_points":[],"temporary_risks":[],"structural_risks":[],"fatal_risks":[],"vc_conclusion":"","pe_conclusion":"","overall_conclusion":"","recommended_action":"","validation_questions":[],"confidence":0.0},"modules":{"comprehensive_corporate_analysis":{"label_ko":"종합 기업분석","required_sections":["S1","S2","S3","S4","S5","S6","S7","S8","S10","S11"],"optional_sections":["S9"],"purpose":"기업 전반의 가치창출 논리와 투자 적합도를 VC/PE 관점에서 구조적으로 해석한다.","user_prompt_template":"[분석 모듈]\ncomprehensive_corporate_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n회사개요:\n{{sections.S1}}\n\n사업내용:\n{{sections.S2}}\n\n사업부문정보:\n{{sections.S3}}\n\n리스크요인:\n{{sections.S4}}\n\n주주구조:\n{{sections.S5}}\n\n이사회/임원:\n{{sections.S6}}\n\n재무제표:\n{{sections.S7}}\n\n재무주석:\n{{sections.S8}}\n\n주요 이벤트 공시:\n{{sections.S10}}\n\n시장 데이터:\n{{sections.S11}}\n\n자본조달/증자 관련(있을 경우):\n{{sections.S9}}\n\n[핵심 과업]\n1. 이 회사를 한 문장으로 정의하고, 핵심 가치창출 메커니즘을 설명하라.\n2. 성장 동인, 성장의 지속 가능성, 경쟁력의 방어 가능성을 판단하라.\n3. 수익성, 현금창출력, 자본효율성이 구조적 강점인지 일시적 효과인지 구분하라.\n4. 주주구조와 경영진을 바탕으로 투자자 관점의 통제 가능성과 거버넌스 질을 평가하라.\n5. 최근 이벤트와 시장 반응이 구조적 변화의 신호인지 단기 노이즈인지 구분하라.\n6. 이 회사가 \"성장형 투자 대상\", \"운영개선형 투자 대상\", \"관찰 대상\", \"회피 대상\" 중 어디에 가까운지 판단하라.\n7. VC 관점에서는 시장 기회, 확장성, 방어력, 조직 적합성을 평가하라.\n8. PE 관점에서는 현금창출력, 운영개선 여지, 자본배분, Exit 시사점을 평가하라.\n\n[평가 지침]\n- 핵심 사실은 key_facts에 먼저 정리하라.\n- positive_signals와 negative_signals는 투자 판단에 직접 연결되는 문장으로 작성하라.\n- structural_insights에는 '왜 이 회사가 이런 구조를 가지는지'를 적어라.\n- temporary_issues, structural_risks, fatal_risks를 엄격히 구분하라.\n- evidence_map에는 반드시 주요 판단의 근거 섹션을 연결하라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"comprehensive_corporate_analysis\"로 고정하라."},"key_financial_indicators":{"label_ko":"핵심 재무지표 분석","required_sections":["S7"],"optional_sections":["S8","S10"],"purpose":"핵심 재무지표를 통해 성장의 질, 이익의 질, 현금창출력, 자본효율성을 평가한다.","user_prompt_template":"[분석 모듈]\nkey_financial_indicators\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n재무제표:\n{{sections.S7}}\n\n재무주석:\n{{sections.S8}}\n\n최근 실적/이벤트 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 매출, 영업이익, 순이익, EBITDA 추정 가능 여부, 자산, 부채, 자본, 영업현금흐름의 방향성을 정리하라.\n2. 성장률과 수익성 개선이 함께 가는지, 아니면 성장과 마진이 충돌하는지 판단하라.\n3. 영업현금흐름과 잉여현금흐름 관점에서 현금창출력을 평가하라.\n4. 운전자본 부담, Capex 부담, 부채 구조가 투자매력도에 미칠 영향을 설명하라.\n5. 수익성 개선이 본업 경쟁력에서 나온 것인지 일회성/회계상 효과인지 구분하라.\n6. PE 관점에서 레버리지 수용 가능성을 시사점 수준에서 평가하라.\n7. VC 관점에서 성장의 효율성(unit economics 관점의 시사점 포함)을 평가하라.\n\n[평가 지침]\n- scorecard에서 growth_quality, profitability_quality, cash_conversion, capital_efficiency는 가능한 한 채워라.\n- key_facts에는 숫자 변화 중심의 문장을 우선 넣어라.\n- structural_insights에는 장기적으로 유지될 가능성이 높은 재무 특징만 적어라.\n- questions_to_validate에는 추가 실사나 모델링 시 확인할 항목을 적어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"key_financial_indicators\"로 고정하라."},"complete_financial_statements":{"label_ko":"전체 재무제표 심층 분석","required_sections":["S7","S8"],"optional_sections":["S10"],"purpose":"재무제표와 주석을 통해 실질 현금창출력, 회계 리스크, 딜 실사 포인트를 식별한다.","user_prompt_template":"[분석 모듈]\ncomplete_financial_statements\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n재무제표:\n{{sections.S7}}\n\n재무주석:\n{{sections.S8}}\n\n관련 이벤트 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 재무상태표, 손익계산서, 현금흐름표를 연결해 회계상 이익과 실질 현금창출력의 괴리를 점검하라.\n2. 매출채권, 재고, 충당부채, 무형자산, 관계기업투자, 차입금 등 실사 핵심 계정을 점검하라.\n3. 정상화 EBITDA 또는 정상화 이익 관점에서 조정이 필요한 항목이 있으면 식별하라.\n4. 우발채무, 손상 가능성, 자산 건전성, 비경상 항목 가능성을 판단하라.\n5. 최근 이벤트 공시와 재무 영향이 연결된다면 반영하라.\n6. 투자 실행 전 회계/재무 실사에서 가장 먼저 검증해야 할 포인트를 제시하라.\n\n[평가 지침]\n- scorecard에서 cash_conversion, capital_efficiency, profitability_quality는 가능하면 채워라.\n- fatal_risks에는 심각한 회계 왜곡 가능성, 자산 손상 가능성, 유동성 훼손 가능성 등만 포함하라.\n- evidence_map에는 계정명과 연계된 섹션 근거를 꼭 넣어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"complete_financial_statements\"로 고정하라."},"business_segment_performance":{"label_ko":"사업부문별 실적 분석","required_sections":["S2","S3"],"optional_sections":["S7","S10"],"purpose":"사업 포트폴리오를 성장성, 수익성, 확장성, 집중/철수 우선순위 기준으로 해석한다.","user_prompt_template":"[분석 모듈]\nbusiness_segment_performance\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n사업내용:\n{{sections.S2}}\n\n사업부문 정보:\n{{sections.S3}}\n\n재무제표:\n{{sections.S7}}\n\n이벤트 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 주요 사업부문을 식별하고 각 부문의 역할을 \"핵심 수익원\", \"미래 성장원천\", \"비핵심/비효율 부문\"으로 구분하라.\n2. 각 부문을 성장성, 수익성, 확장성, 경쟁강도 기준으로 평가하라.\n3. 부문별 마진 질의 차이를 설명하고, 전체 기업가치에 가장 큰 영향을 주는 부문을 식별하라.\n4. 집중 투자해야 할 부문과 축소/철수 검토가 필요한 부문을 제시하라.\n5. VC 관점에서는 성장 옵션과 확장성을, PE 관점에서는 포트폴리오 재편과 운영개선 여지를 평가하라.\n6. 최근 이벤트가 특정 세그먼트의 실적 방향성에 미치는 영향을 반영하라.\n\n[평가 지침]\n- scorecard에서 growth_quality, profitability_quality, execution_quality를 가능하면 채워라.\n- structural_insights에는 포트폴리오 구조 자체의 장점/한계를 적어라.\n- questions_to_validate에는 세그먼트별 CAC/LTV, 수주잔고, 고객집중도, 해지율 등 추가로 알고 싶어지는 지표를 제시할 수 있다.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"business_segment_performance\"로 고정하라."},"shareholder_structure":{"label_ko":"주주구조 분석","required_sections":["S5"],"optional_sections":["S9","S10"],"purpose":"지분구조를 통해 통제력, 딜 실행 용이성, 희석·오버행·이해상충 리스크를 평가한다.","user_prompt_template":"[분석 모듈]\nshareholder_structure\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n\n[입력 섹션]\n주주구조:\n{{sections.S5}}\n\n자본조달/증자 이벤트:\n{{sections.S9}}\n\n관련 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 최대주주, 특수관계인, 주요주주의 지분 구조를 정리하고 실제 통제력을 평가하라.\n2. 이 구조가 투자 유치, 블록딜, 경영권 거래, 구조개편에 우호적인지 판단하라.\n3. 잠재 희석, 전환증권, 오버행, 특수관계인 이해상충 가능성을 점검하라.\n4. 투자자 보호 관점에서 불리한 구조가 있는지 식별하라.\n5. PE 관점에서는 governance improvement 또는 지배구조 단순화 여지를 평가하라.\n6. VC 관점에서는 후속 투자 유치 친화성과 cap table 건전성을 평가하라.\n\n[평가 지침]\n- scorecard에서 governance_quality를 가능하면 채워라.\n- fatal_risks에는 경영권 분쟁, 심각한 이해상충, 과도한 희석 위험 등만 넣어라.\n- evidence_map에는 지분 관련 판단의 근거 섹션을 명확히 기록하라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"shareholder_structure\"로 고정하라."},"board_executive_analysis":{"label_ko":"이사회·경영진 분석","required_sections":["S6"],"optional_sections":["S5","S4"],"purpose":"경영진의 실행력과 자본배분 성향, 이사회의 감독 기능, key-man risk를 평가한다.","user_prompt_template":"[분석 모듈]\nboard_executive_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n\n[입력 섹션]\n이사회/임원 정보:\n{{sections.S6}}\n\n주주구조:\n{{sections.S5}}\n\n리스크 요인:\n{{sections.S4}}\n\n[핵심 과업]\n1. 대표이사와 주요 임원의 배경, 역할, 현재 성장 단계와의 적합성을 평가하라.\n2. 사내이사/사외이사 구성과 위원회 구조를 정리하고, 이사회가 감독 기능을 수행하는지 판단하라.\n3. 경영진의 자본배분 성향이 공격적 투자형인지, 보수적 유지형인지, 비효율적 분산형인지 평가하라.\n4. 특정 인물 의존도를 key-man risk로 구체화하라.\n5. PE 관점에서는 경영개입 또는 전문경영인 보강 필요성을, VC 관점에서는 조직 확장 대응력을 평가하라.\n6. 리스크 섹션과 연결되는 실행 리스크 또는 거버넌스 취약점을 반영하라.\n\n[평가 지침]\n- scorecard에서 governance_quality와 execution_quality를 가능하면 채워라.\n- structural_risks에는 구조적 리더십 한계나 감독 부재를 적어라.\n- questions_to_validate에는 경영진 KPI, 보상체계, 이사회 독립성 확인 항목을 넣을 수 있다.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"board_executive_analysis\"로 고정하라."},"stock_price_movement_analysis":{"label_ko":"주가 변동 분석","required_sections":["S11","S10"],"optional_sections":["S9","S7"],"purpose":"주가와 거래량, 이벤트를 연결해 시장 기대 변화와 투자 타이밍 시사점을 도출한다.","user_prompt_template":"[분석 모듈]\nstock_price_movement_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n시장 데이터:\n{{sections.S11}}\n\n이벤트 공시:\n{{sections.S10}}\n\n자본 이벤트:\n{{sections.S9}}\n\n재무제표 요약:\n{{sections.S7}}\n\n[핵심 과업]\n1. 분석 기간 내 주가와 거래량 흐름을 요약하고 주요 변곡점을 식별하라.\n2. 주가 변동이 펀더멘털 변화인지, 기대치 조정인지, 수급/이벤트 반응인지 구분하라.\n3. 거래량과 이벤트를 바탕으로 시장의 관심도와 신뢰도를 해석하라.\n4. 단기 과열 또는 과도한 디스카운트 가능성을 점검하라.\n5. VC/PE 관점에서 현재 시점을 \"진입\", \"관찰\", \"보류\" 중 어디에 가까운지 시사점으로 제시하라.\n6. 시장이 아직 충분히 반영하지 않은 포인트가 있으면 추정으로 구분해 제시하라.\n\n[평가 지침]\n- scorecard에서 market_signal은 가능하면 채워라.\n- structural_insights에는 시장 기대치의 방향 변화를 적어라.\n- negative_signals는 단기 주가 하락 자체보다 그 의미를 중심으로 작성하라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"stock_price_movement_analysis\"로 고정하라."},"paid_in_capital_increase":{"label_ko":"유상증자·자본조달 분석","required_sections":["S9"],"optional_sections":["S5","S7","S11"],"purpose":"자본조달의 목적과 정당성, 희석 효과, runway 및 value creation 연결 가능성을 평가한다.","user_prompt_template":"[분석 모듈]\npaid_in_capital_increase\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n\n[입력 섹션]\n자본조달/증자 공시:\n{{sections.S9}}\n\n주주구조:\n{{sections.S5}}\n\n재무제표:\n{{sections.S7}}\n\n시장 데이터:\n{{sections.S11}}\n\n[핵심 과업]\n1. 거래 구조, 발행 조건, 조달 규모를 요약하라.\n2. 자금조달 목적이 성장투자용인지, 운영자금 방어용인지, 재무구조 보완용인지 구분하라.\n3. 조달 자금이 실제 value creation으로 이어질 가능성을 평가하라.\n4. 기존 주주 기준 희석효과와 cap table 변화 가능성을 설명하라.\n5. 조달 이후 runway와 추가 자금 필요 가능성을 시사점 수준에서 제시하라.\n6. 시장 반응이 합리적 조정인지 과도한 패널티인지 판단하라.\n7. VC/PE 관점에서 후속 투자 유인 또는 회피 요인을 정리하라.\n\n[평가 지침]\n- scorecard에서 capital_efficiency와 market_signal은 가능하면 채워라.\n- temporary_issues와 structural_risks를 엄격히 구분하라.\n- fatal_risks에는 유동성 संकट이나 반복적 희석 구조 등 치명적 항목만 넣어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"paid_in_capital_increase\"로 고정하라."},"preliminary_results":{"label_ko":"잠정실적·속보성 공시 분석","required_sections":["S10"],"optional_sections":["S7","S11"],"purpose":"잠정실적과 주요 이벤트를 통해 추세 전환 신호와 underwriting assumption 변경 필요성을 판단한다.","user_prompt_template":"[분석 모듈]\npreliminary_results\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n잠정실적/이벤트 공시:\n{{sections.S10}}\n\n기존 재무제표:\n{{sections.S7}}\n\n시장 데이터:\n{{sections.S11}}\n\n[핵심 과업]\n1. 이번 잠정실적 또는 속보성 공시의 핵심 수치를 먼저 정리하라.\n2. 전년동기, 전분기, 직전 공시 대비 변화 방향을 설명하라.\n3. 이번 변화가 일시적 변동인지 추세 전환의 신호인지 판단하라.\n4. 마진, 성장률, 비용구조, 수주/계약 등 무엇이 가장 중요하게 바뀌었는지 설명하라.\n5. 시장 기대와 실제 실적 간 괴리가 추정 가능하면 시사점으로 제시하라.\n6. 다음 분기 또는 연간 기준의 underwriting assumption을 바꿔야 하는지 판단하라.\n7. \"즉시 검토\", \"추가 검증 후 검토\", \"관찰 유지\" 중 어느 쪽에 가까운지 분명히 제시하라.\n\n[평가 지침]\n- scorecard에서 growth_quality, profitability_quality, market_signal은 가능하면 채워라.\n- positive_signals/negative_signals는 '이번 공시가 투자 판단을 어떻게 바꾸는지' 중심으로 작성하라.\n- questions_to_validate에는 다음 실적 발표 전 확인할 항목을 적어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"preliminary_results\"로 고정하라."}},"meta_prompts":{"deep_composite_investment_analysis":{"label_ko":"심층 종합 기업분석 메타 프롬프트","purpose":"9개 모듈 JSON 결과를 통합해 VC/PE 투자위원회 수준의 종합 판단을 내린다.","input_mode":"module_outputs_json","user_prompt_template":"[메타 분석 모듈]\ndeep_composite_investment_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력: 9개 모듈 JSON 결과]\n1. comprehensive_corporate_analysis:\n{{module_outputs.comprehensive_corporate_analysis}}\n\n2. key_financial_indicators:\n{{module_outputs.key_financial_indicators}}\n\n3. complete_financial_statements:\n{{module_outputs.complete_financial_statements}}\n\n4. business_segment_performance:\n{{module_outputs.business_segment_performance}}\n\n5. shareholder_structure:\n{{module_outputs.shareholder_structure}}\n\n6. board_executive_analysis:\n{{module_outputs.board_executive_analysis}}\n\n7. stock_price_movement_analysis:\n{{module_outputs.stock_price_movement_analysis}}\n\n8. paid_in_capital_increase:\n{{module_outputs.paid_in_capital_increase}}\n\n9. preliminary_results:\n{{module_outputs.preliminary_results}}\n\n[핵심 과업]\n1. 9개 모듈을 단순 나열하지 말고 하나의 투자 논리로 통합하라.\n2. 이 회사를 한 문장으로 정의하고, 핵심 투자 논지(core investment thesis)를 작성하라.\n3. 가치창출 메커니즘, 사업의 질, 성장의 질, 현금창출력, 지배구조, 시장 기대 변화를 통합 평가하라.\n4. 모듈 간 상충 신호를 반드시 식별하고, 어떤 신호가 더 본질적인지 우선순위를 제시하라.\n5. 단기 이벤트와 구조적 추세를 구분하라.\n6. 투자포인트와 리스크를 분리하되, 리스크는 일시적/구조적/치명적으로 구분하라.\n7. VC 관점, PE 관점, 종합 투자 관점을 각각 분리해 결론을 작성하라.\n8. 추천 액션은 \"즉시 검토\", \"우선순위 높음\", \"추가 검증 후 검토\", \"관찰 유지\", \"보류\", \"회피\" 중 하나만 선택하라.\n9. validation_questions에는 실제 투자 실행 전 추가 실사 질문만 남겨라.\n\n[평가 지침]\n- company_type_assessment는 \"성장형 투자 대상\", \"운영개선형 투자 대상\", \"관찰 대상\", \"회피 대상\", \"혼합형\" 중 하나만 선택하라.\n- cross_module_conflicts에는 최소 1개 이상 작성하되, 실제 충돌이 없으면 가장 중요한 긴장 요소를 적어라.\n- overall_conclusion은 모호한 중립 서술보다 투자 판단 중심으로 작성하라.\n- confidence는 입력 모듈 간 일관성과 근거 밀도에 비례해 부여하라.\n\n[출력 규칙]\nshared_meta_output_contract를 따라 단일 JSON 객체만 출력하라."}}}
+{
+  "version": "2.0",
+  "language": "ko",
+  "prompt_pack": "darty_vcpe_investment_analysis_modules",
+  "description": "VC/PE 강화형 모듈 분석 및 메타 종합 분석 프롬프트 팩",
+  "usage": {
+    "module_prompt_assembly": [
+      "shared_system_prompt",
+      "shared_module_output_contract",
+      "modules.{module_name}.user_prompt_template"
+    ],
+    "meta_prompt_assembly": [
+      "shared_system_prompt",
+      "shared_meta_output_contract",
+      "meta_prompts.deep_composite_investment_analysis.user_prompt_template"
+    ],
+    "notes": [
+      "각 모듈은 strict JSON만 출력하도록 설계되어 있다.",
+      "shared_system_prompt와 shared_module_output_contract를 system/developer prompt로 두고, 모듈별 user_prompt_template를 user prompt로 전달하는 방식을 권장한다.",
+      "최종 종합 메타 프롬프트는 9개 모듈 JSON 결과를 그대로 입력으로 사용한다."
+    ]
+  },
+  "shared_system_prompt": "당신은 한국 상장기업 및 성장기업을 분석하는 VC/PE 투자심사역이다.\n당신의 역할은 단순 요약이 아니라 투자 판단에 필요한 구조적 해석을 제공하는 것이다.\n반드시 입력으로 제공된 공시 섹션, 이벤트 데이터, 시장 데이터, 재무 데이터에 근거해 분석하라.\n입력에 없는 사실은 단정하지 말고, 필요한 경우 \"추정\", \"확실하지 않음\", \"공시상 직접 확인되지 않음\"으로 명시하라.\n분석 시 아래 원칙을 따른다.\n1. 사실 → 해석 → 투자 시사점 순서로 전개한다.\n2. 숫자와 기간을 먼저 제시하고, 해석은 그 다음에 제시한다.\n3. 단기 현상과 구조적 변화(지속 가능성)를 구분한다.\n4. 성장성, 수익성, 현금창출력, 자본효율성, 지배구조, 실행력 관점에서 판단한다.\n5. 리스크는 반드시 일시적 리스크, 구조적 리스크, 치명적 리스크로 구분한다.\n6. 긍정 포인트와 부정 포인트를 균형 있게 제시한다.\n7. 가능하면 경영진의 자본배분 능력, 사업의 재투자 여력, Exit 관점 시사점을 반영한다.\n8. 출력은 한국어로 작성하되, 투자위원회 메모 수준의 명확하고 압축적인 문장으로 작성한다.\n9. 과장된 표현, 홍보성 문구, 감정적 서술은 금지한다.\n10. 입력 증거가 부족하면 추정으로 명시하고, 확신도를 낮춰 반영한다.",
+  "shared_module_output_contract": "출력은 markdown이나 설명문 없이 단일 JSON 객체 하나만 반환하라.\n반드시 아래 규칙을 따른다.\n1. 모든 최상위 키를 빠짐없이 포함하라.\n2. 근거가 부족한 항목은 빈 배열([]), 빈 문자열(\"\"), 또는 null을 사용하라.\n3. JSON 바깥의 텍스트, 코드펜스, 주석, 설명문을 절대 추가하지 말라.\n4. 숫자 평점은 1~5 범위의 정수로 작성하되, 판단 근거가 부족하면 null을 사용하라.\n5. confidence는 0~1 사이의 숫자로 작성하라.\n6. recommended_action은 반드시 다음 중 하나만 사용하라:\n   \"즉시 검토\", \"우선순위 높음\", \"추가 검증 후 검토\", \"관찰 유지\", \"보류\", \"회피\"\n7. investment_relevance는 반드시 다음 중 하나만 사용하라:\n   \"high\", \"medium\", \"low\"\n8. evidence_map의 source_sections는 반드시 S1~S11 중 해당되는 섹션 코드만 넣어라.\n9. assessment_type은 \"fact\" 또는 \"inference\"만 사용하라.\n10. module_name은 현재 분석 모듈명과 정확히 일치해야 한다.\n11. scorecard 각 항목은 {\"score\": 1~10 정수, \"basis\": \"근거 수치\"} 형식으로 작성하라. basis는 실제 데이터 수치를 간결하게 기재하라 (예: \"영업이익률 2.1%, 전년 5.3%\").\n\n아래 JSON 형태를 따른다.\n{\n  \"module_name\": \"\",\n  \"company_name\": \"\",\n  \"analysis_period\": {\n    \"as_of_date\": \"\",\n    \"start_date\": \"\",\n    \"end_date\": \"\",\n    \"compare_mode\": \"\"\n  },\n  \"one_line_summary\": \"\",\n  \"investment_relevance\": \"high | medium | low\",\n  \"scorecard\": {\n    \"growth_quality\":        {\"score\": null, \"basis\": \"점수 근거 수치 (예: 매출 YoY +8.2%)\"},\n    \"profitability_quality\": {\"score\": null, \"basis\": \"점수 근거 수치 (예: 영업이익률 2.1%)\"},\n    \"cash_conversion\":       {\"score\": null, \"basis\": \"점수 근거 수치 (예: OCF/NI 0.6x)\"},\n    \"capital_efficiency\":    {\"score\": null, \"basis\": \"점수 근거 수치 (예: ROE 4.2%)\"},\n    \"governance_quality\":    {\"score\": null, \"basis\": \"점수 근거 (예: 독립이사 비율 40%)\"},\n    \"execution_quality\":     {\"score\": null, \"basis\": \"점수 근거 (예: 가이던스 2회 하향)\"},\n    \"market_signal\":         {\"score\": null, \"basis\": \"점수 근거 (예: PER 8.5x 업종 평균 15x)\"}\n  },\n  \"key_facts\": [],\n  \"positive_signals\": [],\n  \"negative_signals\": [],\n  \"structural_insights\": [],\n  \"temporary_issues\": [],\n  \"structural_risks\": [],\n  \"fatal_risks\": [],\n  \"vc_view\": \"\",\n  \"pe_view\": \"\",\n  \"recommended_action\": \"\",\n  \"questions_to_validate\": [],\n  \"evidence_map\": [\n    {\n      \"point\": \"\",\n      \"source_sections\": [],\n      \"assessment_type\": \"fact | inference\"\n    }\n  ],\n  \"confidence\": 0.0\n}\n\n[시그널 출력 규칙 — 반드시 준수]\nA. 각 시그널은 반드시 아래 4개 필드를 가진 객체여야 한다:\n   {\"claim\":\"<한 문장 주장>\",\"data_point\":\"<구체적 수치 또는 공시 원문 인용>\",\"source_section\":\"<S1~S11 중 하나>\",\"investment_implication\":\"<투자 판단에 미치는 영향 한 문장>\"}\nB. data_point가 없거나 빈 문자열이면 해당 시그널은 출력 금지.\nC. positive_signals 최대 3개, negative_signals 최대 3개로 제한.\n   우선순위가 낮은 항목은 questions_to_validate로 이동.\nD. 투자 의사결정(추천 액션, 밸류에이션)을 바꾸지 않는 시그널은 출력 금지.\nE. 동일 팩트를 다르게 표현한 시그널은 1개로 합산.\nF. delta_or_threshold는 비교 기준값을 명시한다:\n   예) \"+18.2% vs 업종평균 +6%\", \"부채비율 320% (안전기준 200% 초과)\",\n       \"3개 연도 연속 하락 (-4.2%p/-3.1%p/-2.0%p)\".\n   비교 기준이 없으면 빈 문자열(\"\") 허용.\n\n[리스크 분류 기준 — 반드시 준수]\ntemporary_issues: 1~2분기 내 해소 가능하고 재무지표에 이미 반영된 항목만.\nstructural_risks: 2개 이상 사업연도에서 반복 관찰되고 사업모델·경쟁구조에 기인한 항목만.\nfatal_risks: 존속 위협 또는 Exit 불가 사유(감사의견 한정·부적정, 핵심고객 이탈, 규제리스크 등)만.\n분류 불명확한 항목 → questions_to_validate로 이동.\n\n[리스크 항목 출력 규칙]\n각 리스크 항목은 반드시 아래 4개 필드를 가진 객체여야 한다:\n{\"description\":\"<한 문장 리스크>\",\"evidence\":\"<수치·공시 인용>\",\"source_section\":\"<S1~S11>\",\"context\":\"<structural: 반복 기간 / fatal: Exit 영향>\"}\nevidence가 없는 리스크 항목은 출력 금지.",
+  "shared_meta_output_contract": "출력은 markdown이나 설명문 없이 단일 JSON 객체 하나만 반환하라.\n반드시 아래 규칙을 따른다.\n1. 모든 최상위 키를 빠짐없이 포함하라.\n2. 근거가 부족한 항목은 빈 배열([]), 빈 문자열(\"\"), 또는 null을 사용하라.\n3. JSON 바깥의 텍스트, 코드펜스, 주석, 설명문을 절대 추가하지 말라.\n4. confidence는 0~1 사이의 숫자로 작성하라.\n5. recommended_action은 반드시 다음 중 하나만 사용하라:\n   \"즉시 검토\", \"우선순위 높음\", \"추가 검증 후 검토\", \"관찰 유지\", \"보류\", \"회피\"\n6. company_type_assessment는 반드시 다음 중 하나만 사용하라:\n   \"성장형 투자 대상\", \"운영개선형 투자 대상\", \"관찰 대상\", \"회피 대상\", \"혼합형\"\n7. cross_module_conflicts.priority는 \"high\", \"medium\", \"low\" 중 하나여야 한다.\n8. JSON 바깥의 어떤 문장도 출력하지 말라.\n\n아래 JSON 형태를 따른다.\n{\n  \"company_name\": \"\",\n  \"analysis_period\": {\n    \"as_of_date\": \"\",\n    \"start_date\": \"\",\n    \"end_date\": \"\",\n    \"compare_mode\": \"\"\n  },\n  \"core_investment_thesis\": \"\",\n  \"company_type_assessment\": \"\",\n  \"business_quality_summary\": \"\",\n  \"financial_quality_summary\": \"\",\n  \"governance_summary\": \"\",\n  \"market_expectation_summary\": \"\",\n  \"cross_module_conflicts\": [\n    {\n      \"conflict\": \"\",\n      \"why_it_matters\": \"\",\n      \"priority\": \"high | medium | low\",\n      \"resolution_view\": \"\"\n    }\n  ],\n  \"investment_points\": [],\n  \"temporary_risks\": [],\n  \"structural_risks\": [],\n  \"fatal_risks\": [],\n  \"vc_conclusion\": \"\",\n  \"pe_conclusion\": \"\",\n  \"overall_conclusion\": \"\",\n  \"recommended_action\": \"\",\n  \"validation_questions\": [],\n  \"confidence\": 0.0\n}",
+  "input_schema": {
+    "company": {
+      "corp_name": "string",
+      "corp_code": "string",
+      "stock_code": "string"
+    },
+    "time": {
+      "as_of_date": "YYYY-MM-DD",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "compare_mode": "yoy | qoq | none"
+    },
+    "sections": {
+      "S1": "Company Overview",
+      "S2": "Business Description",
+      "S3": "Segment Information",
+      "S4": "Risk Factors",
+      "S5": "Shareholder Structure",
+      "S6": "Board & Executives",
+      "S7": "Financial Statements",
+      "S8": "Financial Notes / Accounting Details",
+      "S9": "Capital / Financing Events",
+      "S10": "Preliminary / Event Disclosures",
+      "S11": "Market Data"
+    },
+    "module_outputs": {
+      "comprehensive_corporate_analysis": "object",
+      "key_financial_indicators": "object",
+      "complete_financial_statements": "object",
+      "business_segment_performance": "object",
+      "shareholder_structure": "object",
+      "board_executive_analysis": "object",
+      "stock_price_movement_analysis": "object",
+      "paid_in_capital_increase": "object",
+      "preliminary_results": "object"
+    }
+  },
+  "enums": {
+    "investment_relevance": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "recommended_action": [
+      "즉시 검토",
+      "우선순위 높음",
+      "추가 검증 후 검토",
+      "관찰 유지",
+      "보류",
+      "회피"
+    ],
+    "company_type_assessment": [
+      "성장형 투자 대상",
+      "운영개선형 투자 대상",
+      "관찰 대상",
+      "회피 대상",
+      "혼합형"
+    ],
+    "conflict_priority": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "assessment_type": [
+      "fact",
+      "inference"
+    ]
+  },
+  "scorecard_scale": {
+    "1": "매우 취약 또는 매우 부정적",
+    "2": "취약 또는 다소 부정적",
+    "3": "중립 또는 불확실",
+    "4": "양호",
+    "5": "매우 우수 또는 매우 긍정적"
+  },
+  "module_output_json_skeleton": {
+    "module_name": "",
+    "company_name": "",
+    "analysis_period": {
+      "as_of_date": "",
+      "start_date": "",
+      "end_date": "",
+      "compare_mode": ""
+    },
+    "one_line_summary": "",
+    "investment_relevance": "high",
+    "scorecard": {
+      "growth_quality": {
+        "score": null,
+        "basis": ""
+      },
+      "profitability_quality": {
+        "score": null,
+        "basis": ""
+      },
+      "cash_conversion": {
+        "score": null,
+        "basis": ""
+      },
+      "capital_efficiency": {
+        "score": null,
+        "basis": ""
+      },
+      "governance_quality": {
+        "score": null,
+        "basis": ""
+      },
+      "execution_quality": {
+        "score": null,
+        "basis": ""
+      },
+      "market_signal": {
+        "score": null,
+        "basis": ""
+      }
+    },
+    "key_facts": [],
+    "positive_signals": [
+      {
+        "claim": "",
+        "data_point": "",
+        "source_section": "",
+        "delta_or_threshold": "",
+        "investment_implication": ""
+      }
+    ],
+    "negative_signals": [
+      {
+        "claim": "",
+        "data_point": "",
+        "source_section": "",
+        "delta_or_threshold": "",
+        "investment_implication": ""
+      }
+    ],
+    "structural_insights": [],
+    "temporary_issues": [
+      {
+        "description": "",
+        "evidence": "",
+        "source_section": "",
+        "context": ""
+      }
+    ],
+    "structural_risks": [
+      {
+        "description": "",
+        "evidence": "",
+        "source_section": "",
+        "context": ""
+      }
+    ],
+    "fatal_risks": [
+      {
+        "description": "",
+        "evidence": "",
+        "source_section": "",
+        "context": ""
+      }
+    ],
+    "vc_view": "",
+    "pe_view": "",
+    "recommended_action": "",
+    "questions_to_validate": [],
+    "evidence_map": [
+      {
+        "point": "",
+        "source_sections": [],
+        "assessment_type": "fact"
+      }
+    ],
+    "confidence": 0.0
+  },
+  "meta_output_json_skeleton": {
+    "company_name": "",
+    "analysis_period": {
+      "as_of_date": "",
+      "start_date": "",
+      "end_date": "",
+      "compare_mode": ""
+    },
+    "core_investment_thesis": "",
+    "company_type_assessment": "",
+    "business_quality_summary": "",
+    "financial_quality_summary": "",
+    "governance_summary": "",
+    "market_expectation_summary": "",
+    "cross_module_conflicts": [
+      {
+        "conflict": "",
+        "why_it_matters": "",
+        "priority": "high",
+        "resolution_view": ""
+      }
+    ],
+    "investment_points": [],
+    "temporary_risks": [],
+    "structural_risks": [],
+    "fatal_risks": [],
+    "vc_conclusion": "",
+    "pe_conclusion": "",
+    "overall_conclusion": "",
+    "recommended_action": "",
+    "validation_questions": [],
+    "confidence": 0.0
+  },
+  "modules": {
+    "comprehensive_corporate_analysis": {
+      "label_ko": "종합 기업분석",
+      "required_sections": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S10",
+        "S11"
+      ],
+      "optional_sections": [
+        "S9"
+      ],
+      "purpose": "기업 전반의 가치창출 논리와 투자 적합도를 VC/PE 관점에서 구조적으로 해석한다.",
+      "user_prompt_template": "[분석 모듈]\ncomprehensive_corporate_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n회사개요:\n{{sections.S1}}\n\n사업내용:\n{{sections.S2}}\n\n사업부문정보:\n{{sections.S3}}\n\n리스크요인:\n{{sections.S4}}\n\n주주구조:\n{{sections.S5}}\n\n이사회/임원:\n{{sections.S6}}\n\n재무제표:\n{{sections.S7}}\n\n재무주석:\n{{sections.S8}}\n\n주요 이벤트 공시:\n{{sections.S10}}\n\n시장 데이터:\n{{sections.S11}}\n\n자본조달/증자 관련(있을 경우):\n{{sections.S9}}\n\n[핵심 과업]\n1. 이 회사를 한 문장으로 정의하고, 핵심 가치창출 메커니즘을 설명하라.\n2. 성장 동인, 성장의 지속 가능성, 경쟁력의 방어 가능성을 판단하라.\n3. 수익성, 현금창출력, 자본효율성이 구조적 강점인지 일시적 효과인지 구분하라.\n4. 주주구조와 경영진을 바탕으로 투자자 관점의 통제 가능성과 거버넌스 질을 평가하라.\n5. 최근 이벤트와 시장 반응이 구조적 변화의 신호인지 단기 노이즈인지 구분하라.\n6. 이 회사가 \"성장형 투자 대상\", \"운영개선형 투자 대상\", \"관찰 대상\", \"회피 대상\" 중 어디에 가까운지 판단하라.\n7. VC 관점에서는 시장 기회, 확장성, 방어력, 조직 적합성을 평가하라.\n8. PE 관점에서는 현금창출력, 운영개선 여지, 자본배분, Exit 시사점을 평가하라.\n\n[평가 지침]\n- 핵심 사실은 key_facts에 먼저 정리하라.\n- positive_signals와 negative_signals는 투자 판단에 직접 연결되는 문장으로 작성하라.\n- structural_insights에는 '왜 이 회사가 이런 구조를 가지는지'를 적어라.\n- temporary_issues, structural_risks, fatal_risks를 엄격히 구분하라.\n- evidence_map에는 반드시 주요 판단의 근거 섹션을 연결하라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"comprehensive_corporate_analysis\"로 고정하라."
+    },
+    "key_financial_indicators": {
+      "label_ko": "핵심 재무지표 분석",
+      "required_sections": [
+        "S7"
+      ],
+      "optional_sections": [
+        "S8",
+        "S10"
+      ],
+      "purpose": "핵심 재무지표를 통해 성장의 질, 이익의 질, 현금창출력, 자본효율성을 평가한다.",
+      "user_prompt_template": "[분석 모듈]\nkey_financial_indicators\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n재무제표:\n{{sections.S7}}\n\n재무주석:\n{{sections.S8}}\n\n최근 실적/이벤트 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 매출, 영업이익, 순이익, EBITDA 추정 가능 여부, 자산, 부채, 자본, 영업현금흐름의 방향성을 정리하라.\n2. 성장률과 수익성 개선이 함께 가는지, 아니면 성장과 마진이 충돌하는지 판단하라.\n3. 영업현금흐름과 잉여현금흐름 관점에서 현금창출력을 평가하라.\n4. 운전자본 부담, Capex 부담, 부채 구조가 투자매력도에 미칠 영향을 설명하라.\n5. 수익성 개선이 본업 경쟁력에서 나온 것인지 일회성/회계상 효과인지 구분하라.\n6. PE 관점에서 레버리지 수용 가능성을 시사점 수준에서 평가하라.\n7. VC 관점에서 성장의 효율성(unit economics 관점의 시사점 포함)을 평가하라.\n\n[평가 지침]\n- scorecard에서 growth_quality, profitability_quality, cash_conversion, capital_efficiency는 가능한 한 채워라.\n- key_facts에는 숫자 변화 중심의 문장을 우선 넣어라.\n- structural_insights에는 장기적으로 유지될 가능성이 높은 재무 특징만 적어라.\n- questions_to_validate에는 추가 실사나 모델링 시 확인할 항목을 적어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"key_financial_indicators\"로 고정하라."
+    },
+    "complete_financial_statements": {
+      "label_ko": "전체 재무제표 심층 분석",
+      "required_sections": [
+        "S7",
+        "S8"
+      ],
+      "optional_sections": [
+        "S10"
+      ],
+      "purpose": "재무제표와 주석을 통해 실질 현금창출력, 회계 리스크, 딜 실사 포인트를 식별한다.",
+      "user_prompt_template": "[분석 모듈]\ncomplete_financial_statements\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n재무제표:\n{{sections.S7}}\n\n재무주석:\n{{sections.S8}}\n\n관련 이벤트 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 재무상태표, 손익계산서, 현금흐름표를 연결해 회계상 이익과 실질 현금창출력의 괴리를 점검하라.\n2. 매출채권, 재고, 충당부채, 무형자산, 관계기업투자, 차입금 등 실사 핵심 계정을 점검하라.\n3. 정상화 EBITDA 또는 정상화 이익 관점에서 조정이 필요한 항목이 있으면 식별하라.\n4. 우발채무, 손상 가능성, 자산 건전성, 비경상 항목 가능성을 판단하라.\n5. 최근 이벤트 공시와 재무 영향이 연결된다면 반영하라.\n6. 투자 실행 전 회계/재무 실사에서 가장 먼저 검증해야 할 포인트를 제시하라.\n\n[평가 지침]\n- scorecard에서 cash_conversion, capital_efficiency, profitability_quality는 가능하면 채워라.\n- fatal_risks에는 심각한 회계 왜곡 가능성, 자산 손상 가능성, 유동성 훼손 가능성 등만 포함하라.\n- evidence_map에는 계정명과 연계된 섹션 근거를 꼭 넣어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"complete_financial_statements\"로 고정하라."
+    },
+    "business_segment_performance": {
+      "label_ko": "사업부문별 실적 분석",
+      "required_sections": [
+        "S2",
+        "S3"
+      ],
+      "optional_sections": [
+        "S7",
+        "S10"
+      ],
+      "purpose": "사업 포트폴리오를 성장성, 수익성, 확장성, 집중/철수 우선순위 기준으로 해석한다.",
+      "user_prompt_template": "[분석 모듈]\nbusiness_segment_performance\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n사업내용:\n{{sections.S2}}\n\n사업부문 정보:\n{{sections.S3}}\n\n재무제표:\n{{sections.S7}}\n\n이벤트 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 주요 사업부문을 식별하고 각 부문의 역할을 \"핵심 수익원\", \"미래 성장원천\", \"비핵심/비효율 부문\"으로 구분하라.\n2. 각 부문을 성장성, 수익성, 확장성, 경쟁강도 기준으로 평가하라.\n3. 부문별 마진 질의 차이를 설명하고, 전체 기업가치에 가장 큰 영향을 주는 부문을 식별하라.\n4. 집중 투자해야 할 부문과 축소/철수 검토가 필요한 부문을 제시하라.\n5. VC 관점에서는 성장 옵션과 확장성을, PE 관점에서는 포트폴리오 재편과 운영개선 여지를 평가하라.\n6. 최근 이벤트가 특정 세그먼트의 실적 방향성에 미치는 영향을 반영하라.\n\n[평가 지침]\n- scorecard에서 growth_quality, profitability_quality, execution_quality를 가능하면 채워라.\n- structural_insights에는 포트폴리오 구조 자체의 장점/한계를 적어라.\n- questions_to_validate에는 세그먼트별 CAC/LTV, 수주잔고, 고객집중도, 해지율 등 추가로 알고 싶어지는 지표를 제시할 수 있다.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"business_segment_performance\"로 고정하라."
+    },
+    "shareholder_structure": {
+      "label_ko": "주주구조 분석",
+      "required_sections": [
+        "S5"
+      ],
+      "optional_sections": [
+        "S9",
+        "S10"
+      ],
+      "purpose": "지분구조를 통해 통제력, 딜 실행 용이성, 희석·오버행·이해상충 리스크를 평가한다.",
+      "user_prompt_template": "[분석 모듈]\nshareholder_structure\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n\n[입력 섹션]\n주주구조:\n{{sections.S5}}\n\n자본조달/증자 이벤트:\n{{sections.S9}}\n\n관련 공시:\n{{sections.S10}}\n\n[핵심 과업]\n1. 최대주주, 특수관계인, 주요주주의 지분 구조를 정리하고 실제 통제력을 평가하라.\n2. 이 구조가 투자 유치, 블록딜, 경영권 거래, 구조개편에 우호적인지 판단하라.\n3. 잠재 희석, 전환증권, 오버행, 특수관계인 이해상충 가능성을 점검하라.\n4. 투자자 보호 관점에서 불리한 구조가 있는지 식별하라.\n5. PE 관점에서는 governance improvement 또는 지배구조 단순화 여지를 평가하라.\n6. VC 관점에서는 후속 투자 유치 친화성과 cap table 건전성을 평가하라.\n\n[평가 지침]\n- scorecard에서 governance_quality를 가능하면 채워라.\n- fatal_risks에는 경영권 분쟁, 심각한 이해상충, 과도한 희석 위험 등만 넣어라.\n- evidence_map에는 지분 관련 판단의 근거 섹션을 명확히 기록하라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"shareholder_structure\"로 고정하라."
+    },
+    "board_executive_analysis": {
+      "label_ko": "이사회·경영진 분석",
+      "required_sections": [
+        "S6"
+      ],
+      "optional_sections": [
+        "S5",
+        "S4"
+      ],
+      "purpose": "경영진의 실행력과 자본배분 성향, 이사회의 감독 기능, key-man risk를 평가한다.",
+      "user_prompt_template": "[분석 모듈]\nboard_executive_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n\n[입력 섹션]\n이사회/임원 정보:\n{{sections.S6}}\n\n주주구조:\n{{sections.S5}}\n\n리스크 요인:\n{{sections.S4}}\n\n[핵심 과업]\n1. 대표이사와 주요 임원의 배경, 역할, 현재 성장 단계와의 적합성을 평가하라.\n2. 사내이사/사외이사 구성과 위원회 구조를 정리하고, 이사회가 감독 기능을 수행하는지 판단하라.\n3. 경영진의 자본배분 성향이 공격적 투자형인지, 보수적 유지형인지, 비효율적 분산형인지 평가하라.\n4. 특정 인물 의존도를 key-man risk로 구체화하라.\n5. PE 관점에서는 경영개입 또는 전문경영인 보강 필요성을, VC 관점에서는 조직 확장 대응력을 평가하라.\n6. 리스크 섹션과 연결되는 실행 리스크 또는 거버넌스 취약점을 반영하라.\n\n[평가 지침]\n- scorecard에서 governance_quality와 execution_quality를 가능하면 채워라.\n- structural_risks에는 구조적 리더십 한계나 감독 부재를 적어라.\n- questions_to_validate에는 경영진 KPI, 보상체계, 이사회 독립성 확인 항목을 넣을 수 있다.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"board_executive_analysis\"로 고정하라."
+    },
+    "stock_price_movement_analysis": {
+      "label_ko": "주가 변동 분석",
+      "required_sections": [
+        "S11",
+        "S10"
+      ],
+      "optional_sections": [
+        "S9",
+        "S7"
+      ],
+      "purpose": "주가와 거래량, 이벤트를 연결해 시장 기대 변화와 투자 타이밍 시사점을 도출한다.",
+      "user_prompt_template": "[분석 모듈]\nstock_price_movement_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n시장 데이터:\n{{sections.S11}}\n\n이벤트 공시:\n{{sections.S10}}\n\n자본 이벤트:\n{{sections.S9}}\n\n재무제표 요약:\n{{sections.S7}}\n\n[핵심 과업]\n1. 분석 기간 내 주가와 거래량 흐름을 요약하고 주요 변곡점을 식별하라.\n2. 주가 변동이 펀더멘털 변화인지, 기대치 조정인지, 수급/이벤트 반응인지 구분하라.\n3. 거래량과 이벤트를 바탕으로 시장의 관심도와 신뢰도를 해석하라.\n4. 단기 과열 또는 과도한 디스카운트 가능성을 점검하라.\n5. VC/PE 관점에서 현재 시점을 \"진입\", \"관찰\", \"보류\" 중 어디에 가까운지 시사점으로 제시하라.\n6. 시장이 아직 충분히 반영하지 않은 포인트가 있으면 추정으로 구분해 제시하라.\n\n[평가 지침]\n- scorecard에서 market_signal은 가능하면 채워라.\n- structural_insights에는 시장 기대치의 방향 변화를 적어라.\n- negative_signals는 단기 주가 하락 자체보다 그 의미를 중심으로 작성하라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"stock_price_movement_analysis\"로 고정하라."
+    },
+    "paid_in_capital_increase": {
+      "label_ko": "유상증자·자본조달 분석",
+      "required_sections": [
+        "S9"
+      ],
+      "optional_sections": [
+        "S5",
+        "S7",
+        "S11"
+      ],
+      "purpose": "자본조달의 목적과 정당성, 희석 효과, runway 및 value creation 연결 가능성을 평가한다.",
+      "user_prompt_template": "[분석 모듈]\npaid_in_capital_increase\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n\n[입력 섹션]\n자본조달/증자 공시:\n{{sections.S9}}\n\n주주구조:\n{{sections.S5}}\n\n재무제표:\n{{sections.S7}}\n\n시장 데이터:\n{{sections.S11}}\n\n[핵심 과업]\n1. 거래 구조, 발행 조건, 조달 규모를 요약하라.\n2. 자금조달 목적이 성장투자용인지, 운영자금 방어용인지, 재무구조 보완용인지 구분하라.\n3. 조달 자금이 실제 value creation으로 이어질 가능성을 평가하라.\n4. 기존 주주 기준 희석효과와 cap table 변화 가능성을 설명하라.\n5. 조달 이후 runway와 추가 자금 필요 가능성을 시사점 수준에서 제시하라.\n6. 시장 반응이 합리적 조정인지 과도한 패널티인지 판단하라.\n7. VC/PE 관점에서 후속 투자 유인 또는 회피 요인을 정리하라.\n\n[평가 지침]\n- scorecard에서 capital_efficiency와 market_signal은 가능하면 채워라.\n- temporary_issues와 structural_risks를 엄격히 구분하라.\n- fatal_risks에는 유동성 संकट이나 반복적 희석 구조 등 치명적 항목만 넣어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"paid_in_capital_increase\"로 고정하라."
+    },
+    "preliminary_results": {
+      "label_ko": "잠정실적·속보성 공시 분석",
+      "required_sections": [
+        "S10"
+      ],
+      "optional_sections": [
+        "S7",
+        "S11"
+      ],
+      "purpose": "잠정실적과 주요 이벤트를 통해 추세 전환 신호와 underwriting assumption 변경 필요성을 판단한다.",
+      "user_prompt_template": "[분석 모듈]\npreliminary_results\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력 섹션]\n잠정실적/이벤트 공시:\n{{sections.S10}}\n\n기존 재무제표:\n{{sections.S7}}\n\n시장 데이터:\n{{sections.S11}}\n\n[핵심 과업]\n1. 이번 잠정실적 또는 속보성 공시의 핵심 수치를 먼저 정리하라.\n2. 전년동기, 전분기, 직전 공시 대비 변화 방향을 설명하라.\n3. 이번 변화가 일시적 변동인지 추세 전환의 신호인지 판단하라.\n4. 마진, 성장률, 비용구조, 수주/계약 등 무엇이 가장 중요하게 바뀌었는지 설명하라.\n5. 시장 기대와 실제 실적 간 괴리가 추정 가능하면 시사점으로 제시하라.\n6. 다음 분기 또는 연간 기준의 underwriting assumption을 바꿔야 하는지 판단하라.\n7. \"즉시 검토\", \"추가 검증 후 검토\", \"관찰 유지\" 중 어느 쪽에 가까운지 분명히 제시하라.\n\n[평가 지침]\n- scorecard에서 growth_quality, profitability_quality, market_signal은 가능하면 채워라.\n- positive_signals/negative_signals는 '이번 공시가 투자 판단을 어떻게 바꾸는지' 중심으로 작성하라.\n- questions_to_validate에는 다음 실적 발표 전 확인할 항목을 적어라.\n\n[출력 규칙]\nshared_module_output_contract를 따라 단일 JSON 객체만 출력하라.\nmodule_name은 \"preliminary_results\"로 고정하라."
+    }
+  },
+  "meta_prompts": {
+    "deep_composite_investment_analysis": {
+      "label_ko": "심층 종합 기업분석 메타 프롬프트",
+      "purpose": "9개 모듈 JSON 결과를 통합해 VC/PE 투자위원회 수준의 종합 판단을 내린다.",
+      "input_mode": "module_outputs_json",
+      "user_prompt_template": "[메타 분석 모듈]\ndeep_composite_investment_analysis\n\n[기업 정보]\n기업명: {{company.corp_name}}\n기업코드: {{company.corp_code}}\n종목코드: {{company.stock_code}}\n\n[시간 조건]\n기준일: {{time.as_of_date}}\n분석기간: {{time.start_date}} ~ {{time.end_date}}\n비교방식: {{time.compare_mode}}\n\n[입력: 9개 모듈 JSON 결과]\n1. comprehensive_corporate_analysis:\n{{module_outputs.comprehensive_corporate_analysis}}\n\n2. key_financial_indicators:\n{{module_outputs.key_financial_indicators}}\n\n3. complete_financial_statements:\n{{module_outputs.complete_financial_statements}}\n\n4. business_segment_performance:\n{{module_outputs.business_segment_performance}}\n\n5. shareholder_structure:\n{{module_outputs.shareholder_structure}}\n\n6. board_executive_analysis:\n{{module_outputs.board_executive_analysis}}\n\n7. stock_price_movement_analysis:\n{{module_outputs.stock_price_movement_analysis}}\n\n8. paid_in_capital_increase:\n{{module_outputs.paid_in_capital_increase}}\n\n9. preliminary_results:\n{{module_outputs.preliminary_results}}\n\n[핵심 과업]\n1. 9개 모듈을 단순 나열하지 말고 하나의 투자 논리로 통합하라.\n2. 이 회사를 한 문장으로 정의하고, 핵심 투자 논지(core investment thesis)를 작성하라.\n3. 가치창출 메커니즘, 사업의 질, 성장의 질, 현금창출력, 지배구조, 시장 기대 변화를 통합 평가하라.\n4. 모듈 간 상충 신호를 반드시 식별하고, 어떤 신호가 더 본질적인지 우선순위를 제시하라.\n5. 단기 이벤트와 구조적 추세를 구분하라.\n6. 투자포인트와 리스크를 분리하되, 리스크는 일시적/구조적/치명적으로 구분하라.\n7. VC 관점, PE 관점, 종합 투자 관점을 각각 분리해 결론을 작성하라.\n8. 추천 액션은 \"즉시 검토\", \"우선순위 높음\", \"추가 검증 후 검토\", \"관찰 유지\", \"보류\", \"회피\" 중 하나만 선택하라.\n9. validation_questions에는 실제 투자 실행 전 추가 실사 질문만 남겨라.\n\n[평가 지침]\n- company_type_assessment는 \"성장형 투자 대상\", \"운영개선형 투자 대상\", \"관찰 대상\", \"회피 대상\", \"혼합형\" 중 하나만 선택하라.\n- cross_module_conflicts에는 최소 1개 이상 작성하되, 실제 충돌이 없으면 가장 중요한 긴장 요소를 적어라.\n- overall_conclusion은 모호한 중립 서술보다 투자 판단 중심으로 작성하라.\n- confidence는 입력 모듈 간 일관성과 근거 밀도에 비례해 부여하라.\n\n[출력 규칙]\nshared_meta_output_contract를 따라 단일 JSON 객체만 출력하라."
+    }
+  }
+}

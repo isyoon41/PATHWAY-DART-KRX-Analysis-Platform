@@ -170,13 +170,19 @@ export interface VcpeEvidenceItem {
   assessment_type?: 'fact' | 'inference' | string;
 }
 
+// 스코어카드 항목 — v2: {score, basis} 구조 / v1 폴백: 숫자
+export interface VcpeScorecardEntry {
+  score: number;
+  basis?: string;     // 근거 수치 (예: "영업이익률 2.1%, 전년 5.3%")
+}
+
 export interface VcpeScorecard {
   성장성?: number;
   수익성?: number;
   현금창출?: number;
   자본효율?: number;
   거버넌스?: number;
-  [key: string]: number | undefined;
+  [key: string]: number | VcpeScorecardEntry | undefined;
 }
 
 export interface VcpeSignal {

@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, BarChart2, Shield, Zap,
   Target, AlertTriangle, Info,
 } from 'lucide-react';
-import type { VcpeModuleResultData, VcpeSignal, VcpeRiskItem, VcpeEvidenceItem } from '@/lib/api';
+import type { VcpeModuleResultData, VcpeSignal, VcpeRiskItem, VcpeEvidenceItem, VcpeScorecardEntry } from '@/lib/api';
 
 // ──────────────────────────────────────────────────────────────────────
 // 유틸
@@ -48,22 +48,66 @@ function signalDelta(s: VcpeSignal): string | undefined {
   return s.delta_or_threshold;
 }
 
-function ScoreBar({ label, value }: { label: string; value: number }) {
-  const pct = Math.min(100, Math.max(0, (value / 10) * 100));
-  const color =
-    value >= 7 ? 'bg-emerald-500' :
-    value >= 5 ? 'bg-amber-400'   :
+// ──────────────────────────────────────────────────────────────────────
+// 스코어카드 — 한글 레이블 + 근거 수치 매핑
+// ──────────────────────────────────────────────────────────────────────
+const SCORECARD_META: Record<string, { label: string; desc: string }> = {
+  growth_quality:        { label: '성장 품질',   desc: '매출·이익 성장의 지속성 및 질적 수준' },
+  profitability_quality: { label: '수익성',       desc: '영업이익률·순이익률 절대값 및 추세' },
+  cash_conversion:       { label: '현금창출력',  desc: '영업현금흐름과 순이익의 전환율(OCF/NI)' },
+  capital_efficiency:    { label: '자본효율성',  desc: 'ROE·ROIC·자산회전율 종합 평가' },
+  governance_quality:    { label: '거버넌스',    desc: '지배구조·이사회 독립성·주주친화성' },
+  execution_quality:     { label: '실행력',       desc: '비용통제·가이던스 달성·전략 실행' },
+  market_signal:         { label: '시장 시그널', desc: '주가 모멘텀·밸류에이션·시장 인식' },
+};
+
+/** 스코어카드 값 정규화 — v1(숫자) / v2({score,basis}) 모두 처리 */
+function normalizeScoreEntry(val: any): { score: number; basis?: string } | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return { score: val };
+  if (typeof val === 'object' && typeof val.score === 'number') return val as VcpeScorecardEntry;
+  return null;
+}
+
+function ScoreRow({ scoreKey, entry }: { scoreKey: string; entry: { score: number; basis?: string } }) {
+  const meta  = SCORECARD_META[scoreKey];
+  const label = meta?.label ?? scoreKey;
+  const desc  = meta?.desc ?? '';
+  const score = entry.score;
+  const basis = entry.basis?.trim();
+
+  const scoreColor =
+    score >= 7 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+    score >= 5 ? 'bg-amber-100  text-amber-700  border-amber-200'  :
+                 'bg-red-100    text-red-700    border-red-200';
+  const barColor =
+    score >= 7 ? 'bg-emerald-400' :
+    score >= 5 ? 'bg-amber-400'   :
                  'bg-red-400';
+  const pct = Math.min(100, Math.max(0, (score / 10) * 100));
+
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-[12px] text-[#475569] w-20 flex-shrink-0">{label}</span>
-      <div className="flex-1 bg-[#E2E8F0] rounded-full h-2">
-        <div
-          className={`h-2 rounded-full transition-all ${color}`}
-          style={{ width: `${pct}%` }}
-        />
+    <div className="grid grid-cols-[6rem_2.5rem_1fr] items-center gap-3 py-1.5">
+      {/* 레이블 */}
+      <div>
+        <p className="text-[12px] font-semibold text-[#334155]">{label}</p>
+        <p className="text-[10px] text-[#94A3B8] leading-tight">{desc}</p>
       </div>
-      <span className="text-[12px] font-bold text-[#0C2340] w-6 text-right">{value}</span>
+      {/* 점수 뱃지 */}
+      <span className={`text-[13px] font-bold px-2 py-0.5 rounded border text-center ${scoreColor}`}>
+        {score}
+      </span>
+      {/* 바 + 근거 */}
+      <div className="space-y-1">
+        <div className="h-1.5 bg-[#E2E8F0] rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+        {basis && (
+          <p className="text-[11px] text-[#475569] font-mono leading-tight">
+            📊 {basis}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -210,12 +254,16 @@ interface Props {
 export default function VcpeModuleResult({ data, moduleName }: Props) {
   const [activeTab, setActiveTab] = useState<'vc' | 'pe'>('vc');
 
-  const scorecardEntries = data.scorecard
-    ? Object.entries(data.scorecard).filter(([, v]) => typeof v === 'number') as [string, number][]
-    : [];
+  // ── 스코어카드 정규화 (v1 숫자 / v2 {score,basis} 통합) ────────────
+  const scorecardRows: { key: string; entry: { score: number; basis?: string } }[] =
+    data.scorecard
+      ? Object.entries(data.scorecard)
+          .map(([k, v]) => ({ key: k, entry: normalizeScoreEntry(v) }))
+          .filter((r): r is { key: string; entry: { score: number; basis?: string } } => r.entry !== null)
+      : [];
 
-  const avgScore = scorecardEntries.length
-    ? scorecardEntries.reduce((s, [, v]) => s + v, 0) / scorecardEntries.length
+  const avgScore = scorecardRows.length
+    ? scorecardRows.reduce((s, r) => s + r.entry.score, 0) / scorecardRows.length
     : null;
 
   const actionStyle = data.recommended_action
@@ -243,16 +291,22 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
           {data.one_line_summary && (
             <p className="text-[14px] font-semibold text-[#0C2340]">{data.one_line_summary}</p>
           )}
-          {data.key_facts && data.key_facts.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {data.key_facts.map((f, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-[12px] text-[#334155]">
-                  <Info className="w-3.5 h-3.5 mt-0.5 text-[#2E75B6] flex-shrink-0" />
-                  {typeof f === 'string' ? f : (f as any).claim || (f as any).data_point || ''}
-                </li>
-              ))}
-            </ul>
-          )}
+          {(() => {
+            const facts = (data.key_facts ?? [])
+              .map(f => typeof f === 'string' ? f : ((f as any).claim || (f as any).data_point || ''))
+              .filter(t => t.trim() !== '');
+            if (facts.length === 0) return null;
+            return (
+              <ul className="mt-2 space-y-1">
+                {facts.map((t, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-[12px] text-[#334155]">
+                    <Info className="w-3.5 h-3.5 mt-0.5 text-[#2E75B6] flex-shrink-0" />
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
         </div>
         {data.recommended_action && (
           <span className={`flex-shrink-0 text-[11px] font-bold px-3 py-1 rounded-full ${actionStyle}`}>
@@ -262,23 +316,44 @@ export default function VcpeModuleResult({ data, moduleName }: Props) {
       </div>
 
       {/* ── 스코어카드 ── */}
-      {/* (scorecardEntries rendered below) */}
-      {scorecardEntries.length > 0 && (
-        <div className="p-4 border border-[#E2E8F0] rounded">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#64748B] flex items-center gap-1.5">
-              <BarChart2 className="w-3.5 h-3.5" /> 스코어카드
+      {scorecardRows.length > 0 && (
+        <div className="border border-[#E2E8F0] rounded overflow-hidden">
+          {/* 헤더 */}
+          <div className="flex items-center justify-between px-4 py-2.5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+            <h3 className="text-[12px] font-bold text-[#475569] flex items-center gap-1.5">
+              <BarChart2 className="w-3.5 h-3.5" /> 평가 항목별 점수
             </h3>
             {avgScore !== null && (
-              <span className="text-[11px] text-[#94A3B8]">
-                평균 <strong className="text-[#0C2340]">{avgScore.toFixed(1)}</strong> / 10
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-[#94A3B8]">종합</span>
+                <span className={`text-[12px] font-bold px-2 py-0.5 rounded border ${
+                  avgScore >= 7 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                  avgScore >= 5 ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                                  'bg-red-100 text-red-700 border-red-200'
+                }`}>
+                  {avgScore.toFixed(1)} / 10
+                </span>
+              </div>
             )}
           </div>
-          <div className="space-y-2">
-            {scorecardEntries.map(([k, v]) => (
-              <ScoreBar key={k} label={k} value={v} />
+          {/* 컬럼 헤더 */}
+          <div className="grid grid-cols-[6rem_2.5rem_1fr] gap-3 px-4 py-1 bg-[#F1F5F9] border-b border-[#E2E8F0]">
+            <span className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider">항목</span>
+            <span className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider text-center">점수</span>
+            <span className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-wider">추세 · 근거 수치</span>
+          </div>
+          {/* 행 */}
+          <div className="divide-y divide-[#F1F5F9] px-4">
+            {scorecardRows.map(({ key, entry }) => (
+              <ScoreRow key={key} scoreKey={key} entry={entry} />
             ))}
+          </div>
+          {/* 범례 */}
+          <div className="flex items-center gap-4 px-4 py-2 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+            <span className="text-[10px] text-[#94A3B8]">점수 기준:</span>
+            <span className="flex items-center gap-1 text-[10px] text-emerald-600"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"/>7~10 양호</span>
+            <span className="flex items-center gap-1 text-[10px] text-amber-600"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block"/>5~6 보통</span>
+            <span className="flex items-center gap-1 text-[10px] text-red-600"><span className="w-2 h-2 rounded-full bg-red-400 inline-block"/>1~4 부진</span>
           </div>
         </div>
       )}
