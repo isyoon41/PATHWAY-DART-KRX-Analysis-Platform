@@ -489,9 +489,9 @@ class ModuleAnalysisService:
             self.client = genai.Client(api_key=settings.google_api_key)
         else:
             self.client = None
-        # 일반 모듈: gemini-2.0-flash (안정, 무료 1,500 RPD)
+        # 일반 모듈: gemini-2.5-flash (유료 신규 사용자 가용, RPM 1,000)
         self.model      = settings.gemini_model
-        # 투자심화 분석: gemini-2.5-flash-preview (고품질, 무료 500 RPD)
+        # 투자심화 분석: gemini-2.5-flash-preview (고품질)
         self.model_meta = settings.gemini_model_meta
 
     def _call_gemini(
@@ -671,7 +671,7 @@ class ModuleAnalysisService:
                 + user_prompt
             )
 
-        # ── 5. Gemini 호출 — 일반 모듈: gemini-2.0-flash ───────────────
+        # ── 5. Gemini 호출 — 일반 모듈: gemini-2.5-flash ───────────────
         max_tokens = module_meta.get("max_tokens", 8192)
         raw_text   = await self._call_gemini_with_retry(
             system_prompt, user_prompt, max_tokens,
