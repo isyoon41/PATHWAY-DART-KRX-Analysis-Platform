@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 # 섹션 정의: DART 사업보고서 표준 목차 (법정 양식)
 # 출처: 증권의 발행 및 공시 등에 관한 규정 시행세칙
 # ──────────────────────────────────────────────────
+# 재무제표 단위 감지 패턴 — "(단위 : 원)" 등
+_UNIT_PATTERN = re.compile(r"단위\s*[:：]\s*(백만원|천원|원)", re.IGNORECASE)
+
 SECTION_PATTERNS = [
     # (섹션 코드, 표시명, 정규표현식 패턴 목록)
     # S1 — 기업 개요
@@ -53,6 +56,7 @@ class ReportSection:
     tables: List[Dict] = field(default_factory=list)   # 표 데이터
     char_count: int = 0                # 텍스트 길이
     source_url: str = ""               # 출처 URL
+    financial_unit: Optional[str] = None  # 재무 섹션 단위 (원/천원/백만원)
 
 
 @dataclass
@@ -227,6 +231,15 @@ class DARTReportParser:
         # 표 구조화
         tables = self._extract_tables(temp_soup)
 
+        # 재무 섹션에서 단위 자동 감지 ("단위 : 원" 등)
+        financial_unit: Optional[str] = None
+        if code in ("financial_info", "audit_opinion"):
+            # HTML 원문 전체 검색 (표 헤더에 단위가 주로 위치)
+            search_text = raw_text[:3000]
+            m = _UNIT_PATTERN.search(search_text)
+            if m:
+                financial_unit = m.group(1)
+
         return ReportSection(
             code=code,
             title=title,
@@ -234,6 +247,7 @@ class DARTReportParser:
             tables=tables[:10],      # 표 최대 10개
             char_count=len(clean),
             source_url=f"{self.base_url}/dsaf001/main.do?rcpNo={rcept_no}",
+            financial_unit=financial_unit,
         )
 
     def _clean_text(self, text: str) -> str:

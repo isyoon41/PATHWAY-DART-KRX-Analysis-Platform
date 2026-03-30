@@ -212,11 +212,12 @@ async def _fetch_sections_from_report(
             if dc in parsed.sections:
                 sec = parsed.sections[dc]
                 dart_map[dc] = {
-                    "title":      sec.title,
-                    "content":    sec.content,
-                    "char_count": sec.char_count,
-                    "rcept_no":   rcept_no,
-                    "rcept_dt":   rcept_dt,
+                    "title":          sec.title,
+                    "content":        sec.content,
+                    "char_count":     sec.char_count,
+                    "rcept_no":       rcept_no,
+                    "rcept_dt":       rcept_dt,
+                    "financial_unit": sec.financial_unit,   # 단위 자동감지 결과
                 }
 
         result: Dict[str, Dict] = {}
@@ -250,39 +251,104 @@ async def _fetch_sections_from_report(
 # 재무 포맷 헬퍼
 # ══════════════════════════════════════════════════════════════════════
 
+def _fmt_val(v: Any) -> str:
+    """숫자면 콤마 포맷, None/N/A면 'N/A' 반환"""
+    if v is None or v == "N/A":
+        return "N/A"
+    try:
+        return f"{int(v):,}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
 def _fmt_financials(
     financials_by_year: Dict[str, Any],
     years: List[str],
-    financials_quarterly: Optional[Dict[str, Any]] = None,   # 개선 7
+    financials_quarterly: Optional[Dict[str, Any]] = None,
+    financial_unit: str = "백만원",    # dart_parser가 감지한 단위
 ) -> str:
-    """연간 XBRL 재무 + 분기 실적 통합 텍스트"""
+    """연간 XBRL 재무 (3기 비교) + 분기 실적 통합 텍스트"""
     lines = []
     for yr in years:
         f = financials_by_year.get(yr, {})
         if not f:
             continue
-        inc    = f.get("income_statement", {})
-        bal    = f.get("balance_sheet", {})
-        rat    = f.get("ratios", {})
-        cur_i  = inc.get("current", {})
-        cur_b  = bal.get("current", {})
-        prev_i = inc.get("previous", {})
-        lines.append(
-            f"[{yr}년 연간 재무 — DART XBRL]\n"
-            f"  매출액:      {cur_i.get('revenue','N/A'):>15,} 천원"
-            f"  (전기: {prev_i.get('revenue','N/A')})\n"
-            f"  영업이익:    {cur_i.get('operating_profit','N/A'):>15,} 천원\n"
-            f"  당기순이익:  {cur_i.get('net_income','N/A'):>15,} 천원\n"
-            f"  총자산:      {cur_b.get('total_assets','N/A'):>15,} 천원\n"
-            f"  자기자본:    {cur_b.get('total_equity','N/A'):>15,} 천원\n"
-            f"  영업이익률:  {rat.get('operating_margin_pct','N/A'):>8}%  "
-            f"순이익률: {rat.get('net_margin_pct','N/A'):>8}%\n"
-            f"  ROE: {rat.get('roe_pct','N/A'):>8}%  "
-            f"ROA: {rat.get('roa_pct','N/A'):>8}%  "
-            f"부채비율: {rat.get('debt_ratio_pct','N/A'):>8}%"
-        )
+        inc  = f.get("income_statement", {})
+        bal  = f.get("balance_sheet", {})
+        cf   = f.get("cash_flow", {})
+        rat  = f.get("ratios", {})
+        gro  = f.get("growth", {})
+        per  = f.get("periods", {})
 
-    # 개선 7: 분기 데이터 추가
+        cur_nm   = per.get("current",       "당기")
+        prev_nm  = per.get("previous",      "전기")
+        prev2_nm = per.get("two_years_ago", "전전기")
+
+        cur_i  = inc.get("current",       {})
+        prev_i = inc.get("previous",      {})
+        tya_i  = inc.get("two_years_ago", {})
+        cur_b  = bal.get("current",       {})
+        prev_b = bal.get("previous",      {})
+        cur_cf = cf.get("current",        {})
+
+        def row(label: str, key: str) -> str:
+            c = _fmt_val(cur_i.get(key))
+            p = _fmt_val(prev_i.get(key))
+            t = _fmt_val(tya_i.get(key))
+            return (
+                f"  {label:<12}  {cur_nm}: {c:>14}  "
+                f"{prev_nm}: {p:>14}  {prev2_nm}: {t:>14}"
+            )
+
+        block = [
+            f"[{yr}년 연간 재무 — DART XBRL | 금액단위: {financial_unit}]",
+            "  ─── 손익계산서 (Income Statement) ───",
+            row("매출액",     "revenue"),
+            row("매출원가",   "cost_of_sales"),
+            row("매출총이익", "gross_profit"),
+            row("영업이익",   "operating_profit"),
+            row("당기순이익", "net_income"),
+        ]
+
+        # 재무상태표 (당기·전기)
+        block += [
+            "  ─── 재무상태표 (Balance Sheet) ───",
+            f"  {'총자산':<12}  {cur_nm}: {_fmt_val(cur_b.get('total_assets')):>14}"
+            f"  {prev_nm}: {_fmt_val(prev_b.get('total_assets')):>14}",
+            f"  {'유동자산':<12}  {cur_nm}: {_fmt_val(cur_b.get('current_assets')):>14}"
+            f"  {prev_nm}: {_fmt_val(prev_b.get('current_assets')):>14}",
+            f"  {'부채총계':<12}  {cur_nm}: {_fmt_val(cur_b.get('total_liabilities')):>14}"
+            f"  {prev_nm}: {_fmt_val(prev_b.get('total_liabilities')):>14}",
+            f"  {'자기자본':<12}  {cur_nm}: {_fmt_val(cur_b.get('total_equity')):>14}"
+            f"  {prev_nm}: {_fmt_val(prev_b.get('total_equity')):>14}",
+        ]
+
+        # 현금흐름표
+        block += [
+            "  ─── 현금흐름표 (Cash Flow) ───",
+            f"  {'영업현금흐름':<12}  {cur_nm}: {_fmt_val(cur_cf.get('operating')):>14}",
+            f"  {'투자현금흐름':<12}  {cur_nm}: {_fmt_val(cur_cf.get('investing')):>14}",
+            f"  {'재무현금흐름':<12}  {cur_nm}: {_fmt_val(cur_cf.get('financing')):>14}",
+        ]
+
+        # 비율
+        block += [
+            "  ─── 주요 재무비율 ───",
+            f"  영업이익률: {rat.get('operating_margin_pct','N/A')}%   순이익률: {rat.get('net_margin_pct','N/A')}%",
+            f"  ROE: {rat.get('roe_pct','N/A')}%   ROA: {rat.get('roa_pct','N/A')}%   부채비율: {rat.get('debt_ratio_pct','N/A')}%",
+        ]
+
+        # 성장률
+        rev_g = gro.get("revenue_growth_pct")
+        op_g  = gro.get("operating_profit_growth_pct")
+        if rev_g is not None or op_g is not None:
+            block.append(
+                f"  전기 대비 성장률 — 매출: {rev_g}%   영업이익: {op_g}%"
+            )
+
+        lines.append("\n".join(block))
+
+    # 분기 데이터
     if financials_quarterly:
         qtr_lines = []
         for qtr_key in sorted(financials_quarterly.keys(), reverse=True)[:8]:
@@ -291,17 +357,18 @@ def _fmt_financials(
                 continue
             inc_q = qf.get("income_statement", {}).get("current", {})
             rat_q = qf.get("ratios", {})
-            rev   = inc_q.get("revenue", "N/A")
-            op    = inc_q.get("operating_profit", "N/A")
-            ni    = inc_q.get("net_income", "N/A")
+            rev   = inc_q.get("revenue")
+            op    = inc_q.get("operating_profit")
+            ni    = inc_q.get("net_income")
             opm   = rat_q.get("operating_margin_pct", "N/A")
-            qtr_lines.append(
-                f"  [{qtr_key}] 매출:{rev:>12,}  영업:{op:>12,}  순익:{ni:>12,}  OPM:{opm}%"
-                if isinstance(rev, (int, float)) else
-                f"  [{qtr_key}] 데이터 없음"
-            )
+            if isinstance(rev, (int, float)):
+                qtr_lines.append(
+                    f"  [{qtr_key}] 매출:{rev:>12,}  영업:{_fmt_val(op):>12}  순익:{_fmt_val(ni):>12}  OPM:{opm}%"
+                )
+            else:
+                qtr_lines.append(f"  [{qtr_key}] 데이터 없음")
         if qtr_lines:
-            lines.append("[분기별 실적 추이 — DART XBRL]\n" + "\n".join(qtr_lines))
+            lines.append(f"[분기별 실적 추이 — DART XBRL | 금액단위: {financial_unit}]\n" + "\n".join(qtr_lines))
 
     return "\n\n".join(lines) if lines else "[XBRL 재무 데이터 없음]"
 
@@ -350,8 +417,17 @@ def _assemble_section_strings(
     if not s["S6"].strip():
         s["S6"] = "[이사회·임원 데이터 없음]"
 
-    # 개선 7: S7에 분기 데이터 포함
-    s["S7"] = _fmt_financials(financials_by_year, years, financials_quarterly)
+    # S7: XBRL 구조 데이터 + HTML '재무에 관한 사항' 원문 병합
+    # 단위는 HTML 원문에서 자동 감지한 값 사용 (없으면 기본값 백만원)
+    s7_raw = fetched_sections.get("S7", {})
+    financial_unit = s7_raw.get("financial_unit") or "백만원"
+    s["S7"] = _fmt_financials(financials_by_year, years, financials_quarterly, financial_unit=financial_unit)
+    html_fin = s7_raw.get("content", "").strip()
+    if html_fin:
+        s["S7"] += (
+            "\n\n[원문 '재무에 관한 사항' — 사업보고서 HTML]\n"
+            + html_fin[:6000]
+        )
 
     # ── S7 말미에 주요 재무지표(EPS/BPS/PER/PBR) 주입 ─────────────────
     ki = governance_data.get("key_indicators")
